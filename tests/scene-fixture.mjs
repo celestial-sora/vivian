@@ -30,7 +30,7 @@ export async function startSceneFixture() {
         if (info) return objects.has(key) ? send(200, { name: key, id: key, metadata: { mimetype: "image/webp" } }) : send(404, { message: "not found" });
         if (request.method === "POST") { objects.set(key, bytes); return send(200, { Key: `vivian-scenes/${key}`, Id: key }); }
         if (!objects.has(key)) return send(404, { message: "not found" });
-        response.writeHead(200, { "Content-Type": "image/webp" }); response.end(objects.get(key)); return;
+        response.writeHead(200, { "Content-Type": key.endsWith(".png") ? "image/png" : key.endsWith(".jpg") ? "image/jpeg" : key.endsWith(".avif") ? "image/avif" : "image/webp" }); response.end(objects.get(key)); return;
       }
       if (url.pathname.startsWith("/rest/v1/")) {
         const table = url.pathname.slice("/rest/v1/".length);

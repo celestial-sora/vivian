@@ -8,8 +8,8 @@ never enter Git, the deployment bundle, or an AI provider request.
 
 | Category | Project-wide reservation limit |
 | --- | ---: |
-| Live2D packages | 8,000,000,000 bytes (8 decimal GB) |
-| Other files, including scene images and thumbnails | 2,000,000,000 bytes (2 decimal GB) |
+| All Live2D packages, scene originals, thumbnails and other files combined | 8,000,000,000 bytes (8 decimal GB) |
+| Unused safety buffer within the 10 GB allowance | 2,000,000,000 bytes (2 decimal GB) |
 | One model archive and its expanded package | 536,870,912 bytes (512 MiB) each |
 
 These limits cover all authorized accounts together. They are fixed in SQL and
@@ -20,7 +20,7 @@ over the limit are rejected; folder imports also count ZIP container overhead.
 memory limits using temporary resized copies; original files remain unchanged.
 
 Pending multipart uploads, ready objects, and objects awaiting deletion all
-consume quota. A conditional update to a locked quota row reserves space inside
+consume quota. Both category quota rows are locked in a consistent order and their combined usage is checked inside
 the same transaction as the object insert. Both scene images are reserved in one
 transaction, so an image cannot consume space without reserving its thumbnail.
 Quota is released only after remote objects/multipart sessions are deleted.
@@ -38,9 +38,11 @@ while the previous image is still stored.
    Keep credentials out of Git, client bundles, and chat messages.
 3. Apply `supabase/migrations/20261005131311_private_r2_storage.sql`, then
    `supabase/migrations/20261005133532_storage_status.sql`, then
-   `supabase/migrations/20261005135133_observed_r2_usage.sql`, after the existing
+   `supabase/migrations/20261005135133_observed_r2_usage.sql`, then
+   `supabase/migrations/20261005152924_shared_r2_budget.sql`, after the existing
    scene migration. These add the quota ledger, provider-aware cleanup, and
-   service-only Supabase usage aggregate, and observed bucket accounting. Ensure the Supabase project is active and the existing server
+   service-only Supabase usage aggregate, observed bucket accounting, and the shared
+   8 GB budget with 2 GB unused. Ensure the Supabase project is active and the existing server
    credentials/Auth configuration are valid.
 4. Set the bucket CORS policy from `config/r2-cors.json`. Replace the example
    production origin with the exact deployed origin; add native/web preview
@@ -64,7 +66,7 @@ part sizes and ETags, then checks the completed object size before exposing it.
 Download links are issued only for the authenticated owner and expire after five
 minutes. They are bearer links during that time: do not log or share them.
 
-Scene downloads remain behind the existing authenticated API. Models are loaded
+Scene originals retain their source JPEG/PNG/WebP/AVIF bytes, MIME type and resolution; only thumbnails are converted to WebP. Scene downloads remain behind the existing authenticated API. Models are loaded
 on demand and validated again before rendering. IndexedDB caches cloud originals
 by owner; cached models remain usable when cloud access is temporarily down.
 Other accounts' cloud caches are not included in the model picker. Older
@@ -74,7 +76,7 @@ local-only imports can be explicitly saved using **Save this model to cloud**.
 
 The config menu's former Gallery item is now **Status**. It displays used bytes,
 capacity and percentage for Supabase file storage, R2 total, Live2D and other
-files. `GET /api/storage/status` checks the existing verified account allowlist.
+files. Category figures are breakdowns of the same 8 GB shared budget, not separate allocations. The remaining 2 GB is deliberately unused. `GET /api/storage/status` checks the existing verified account allowlist.
 The panel polls every five seconds while mounted and visible, refreshes after
 model/scene mutations, and aborts requests when closed. This is polling rather
 than a Supabase Realtime subscription. Failed checks display Unavailable or a
@@ -115,7 +117,7 @@ Use a dedicated bucket and keep all application uploads through this ledger.
 Files uploaded manually are measured on the next live check and reduce available
 app quota, but this app cannot prevent another tool from writing into the bucket.
 R2's free allowance applies across the Cloudflare account, including any other
-buckets. The 8+2 GB storage cap does not cap billable request counts, Workers,
+buckets. The shared 8 GB upload cap and unused 2 GB buffer do not cap billable request counts, Workers,
 Vercel traffic, or other services. Enable billing alerts and monitor the account;
 this is not a guarantee that the entire deployment will always cost zero.
 
@@ -128,8 +130,8 @@ Use only models whose licenses permit your intended private cloud storage.
 - `npm run test:storage`: byte limits, ownership, reservations, failed deletion,
   scene accounting, exact signed lengths, verified multipart completion.
 - `npm run test:storage:postgres`: actual migrations and parallel quota writes in
-  a disposable local Postgres 17 container named `vivian-r2-postgres` (override
-  with `STORAGE_TEST_CONTAINER`). The test creates/drops its own database and
+  a disposable local Postgres 16+ container named `vivian-r2-postgres` (override
+  with `STORAGE_TEST_CONTAINER`; use `STORAGE_TEST_RUNTIME=podman` for Podman). The test creates/drops its own database and
   never connects to a live Supabase project.
 - Existing model/scene suites, Auth integration, TypeScript, production build.
 

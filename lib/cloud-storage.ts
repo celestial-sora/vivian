@@ -1,5 +1,9 @@
 /** Billing GB is decimal; individual model limits remain binary MiB. */
-export const STORAGE_LIMITS = { live2d: 8_000_000_000, other: 2_000_000_000 } as const;
+export const STORAGE_CAPACITY_BYTES = 10_000_000_000;
+export const STORAGE_BUFFER_BYTES = 2_000_000_000;
+export const STORAGE_BUDGET_BYTES = STORAGE_CAPACITY_BYTES - STORAGE_BUFFER_BYTES;
+// Categories are a breakdown of the same shared budget, never additive quotas.
+export const STORAGE_LIMITS = { live2d: STORAGE_BUDGET_BYTES, other: STORAGE_BUDGET_BYTES } as const;
 export const MODEL_MAX_BYTES = 512 * 1024 * 1024;
 export const MODEL_PART_BYTES = 16 * 1024 * 1024;
 export type StorageCategory = keyof typeof STORAGE_LIMITS;

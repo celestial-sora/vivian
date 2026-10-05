@@ -9,7 +9,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 let fixture, child, base, scene;
 before(async () => {
   fixture = await startSceneFixture();
-  const env = { ...process.env, NEXT_PUBLIC_SUPABASE_URL: fixture.url, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_local_test_only", SUPABASE_URL: fixture.url, SUPABASE_SERVICE_ROLE_KEY: "fixture-admin", GROQ_API_KEY: "fixture-groq", TYPESAFE_API_KEY: "fixture-jev", JEV_ENABLED: "true", GEMINI_API_KEY: "", CEREBRAS_API_KEY: "", COMPOSIO_API_KEY: "", OPENROUTER_API_KEY: "", FISH_AUDIO_API_KEY: "", VIVIAN_TEST_SCENE_UPSTREAM: fixture.url, NODE_OPTIONS: `--import ${fileURLToPath(new URL("./scene-upstream-fixture.mjs", import.meta.url))}` };
+  const env = { ...process.env, NEXT_PUBLIC_SUPABASE_URL: fixture.url, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_local_test_only", SUPABASE_URL: fixture.url, SUPABASE_SERVICE_ROLE_KEY: "fixture-admin", GROQ_API_KEY: "fixture-groq", TYPESAFE_API_KEY: "fixture-jev", JEV_ENABLED: "true", GEMINI_API_KEY: "", CEREBRAS_API_KEY: "", COMPOSIO_API_KEY: "", OPENROUTER_API_KEY: "", FISH_AUDIO_API_KEY: "", VIVIAN_TEST_SCENE_UPSTREAM: fixture.url, NODE_OPTIONS: `--import ${new URL("./scene-upstream-fixture.mjs", import.meta.url).href}` };
   child = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "-p", "0", "-H", "127.0.0.1"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
   let output = ""; child.stdout.on("data", (data) => { output += data; }); child.stderr.on("data", (data) => { output += data; });
   for (let i = 0; i < 150; i++) {
@@ -30,8 +30,9 @@ test("real scene routes accept actual image upload, persist private objects, and
   assert.equal(scene.label, "ห้องนอนตอนกลางคืน"); assert.equal(fixture.objects.size, 2);
   const imported = await call("/api/scenes", json({ label: "บ้านของ Vivian", url: "http://images.example.com/wallpaper.png" }));
   assert.equal(imported.status, 201, await imported.clone().text()); assert.equal((await imported.json()).scene.sourceType, "url"); assert.equal(fixture.objects.size, 4);
-  const image = await call(scene.imageUrl); assert.equal(image.status, 200); assert.equal(image.headers.get("content-type"), "image/webp"); assert.match(image.headers.get("cache-control"), /private/);
-  assert.equal((await call(`${scene.imageUrl}&thumbnail=1`)).status, 200);
+  const image = await call(scene.imageUrl); assert.equal(image.status, 200); assert.equal(image.headers.get("content-type"), "image/png"); assert.match(image.headers.get("cache-control"), /private/);
+  assert.deepEqual(Buffer.from(await image.arrayBuffer()), fixture.png);
+  const thumbnail = await call(`${scene.imageUrl}&thumbnail=1`); assert.equal(thumbnail.status, 200); assert.equal(thumbnail.headers.get("content-type"), "image/webp");
 });
 test("URL preview creates no records; invalid labels/images/private URLs/import failures create no scenes", async () => {
   const count = fixture.rows.vivian_scenes.length;

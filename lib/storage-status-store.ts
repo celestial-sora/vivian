@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { observedR2Accounting } from "@/lib/cloud-store";
 import { r2Inventory } from "@/lib/r2";
-import { STORAGE_LIMITS, inventoryUsage } from "@/lib/cloud-storage";
+import { STORAGE_BUDGET_BYTES, inventoryUsage } from "@/lib/cloud-storage";
 import type { StorageStatus } from "@/lib/storage-status";
 export async function getStorageStatus(db: SupabaseClient): Promise<StorageStatus> {
   const configuredLimit = Number(process.env.SUPABASE_STORAGE_LIMIT_BYTES ?? 1_000_000_000);
@@ -19,7 +19,7 @@ export async function getStorageStatus(db: SupabaseClient): Promise<StorageStatu
   const categories = r2.status === "fulfilled" ? r2.value : null;
   return {
     supabase: { usedBytes: supabase.status === "fulfilled" ? supabase.value : null, limitBytes: supabaseLimit, connected: supabase.status === "fulfilled" },
-    r2: { usedBytes: categories ? categories.live2d.used + categories.other.used : null, limitBytes: STORAGE_LIMITS.live2d + STORAGE_LIMITS.other, connected: !!categories, categories, quotaUsage: quota.status === "fulfilled" ? quota.value : null },
+    r2: { usedBytes: categories ? categories.live2d.used + categories.other.used : null, limitBytes: STORAGE_BUDGET_BYTES, connected: !!categories, categories, quotaUsage: quota.status === "fulfilled" ? quota.value : null },
     checkedAt: new Date().toISOString(),
   };
 }

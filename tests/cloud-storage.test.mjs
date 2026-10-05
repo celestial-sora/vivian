@@ -5,6 +5,7 @@ import { loadSceneModule as load } from "./scene-module-loader.mjs";
 const require = createRequire(import.meta.url);
 const limits = load("../lib/cloud-storage.ts", {}, { TextDecoder });
 const { StorageError } = limits;
+const sceneContracts = load("../lib/scenes.ts");
 const statusFormat = load("../lib/storage-status.ts");
 test("storage percentages use decimal capacities, retaining over-cap values and readable units", () => {
   assert.equal(statusFormat.storagePercentage(250000000, 1000000000), 25);
@@ -17,25 +18,27 @@ test("Status reports provider failures as unknown rather than an empty zero-byte
   const statusStore = load("../lib/storage-status-store.ts", { "@/lib/cloud-storage": limits, "@/lib/cloud-store": { observedR2Accounting: async () => { throw new Error("Database unavailable"); } }, "@/lib/r2": { r2Inventory: async () => { throw new Error("Not configured"); } } });
   const result = await statusStore.getStorageStatus({ rpc: async () => ({ data: null, error: { message: "unavailable" } }) });
   assert.equal(result.supabase.usedBytes, null); assert.equal(result.r2.usedBytes, null);
-  assert.equal(result.r2.connected, false); assert.equal(result.r2.limitBytes, 10e9);
+  assert.equal(result.r2.connected, false); assert.equal(result.r2.limitBytes, 8e9);
 });
 test("Status reads actual R2 bytes separately from larger reserved upload quotas", async () => {
-  const statusStore = load("../lib/storage-status-store.ts", { "@/lib/cloud-storage": limits, "@/lib/cloud-store": { observedR2Accounting: async () => ({usage:{live2d:{used:2e9,limit:8e9},other:{used:1e9,limit:2e9}}}) }, "@/lib/r2": { r2Inventory: async () => new Map([["live2d/model.zip",100],["external-file",250]]) } });
+  const statusStore = load("../lib/storage-status-store.ts", { "@/lib/cloud-storage": limits, "@/lib/cloud-store": { observedR2Accounting: async () => ({usage:{live2d:{used:2e9,limit:8e9},other:{used:1e9,limit:8e9}}}) }, "@/lib/r2": { r2Inventory: async () => new Map([["live2d/model.zip",100],["external-file",250]]) } });
   const result = await statusStore.getStorageStatus({ rpc: async () => ({data:"250000000",error:null}) });
   assert.equal(result.supabase.usedBytes,250000000); assert.equal(result.r2.usedBytes,350);
   assert.equal(result.r2.categories.live2d.limit,8e9);
   assert.equal(result.r2.quotaUsage.live2d.used,2e9);
 });
 test("R2 Status cannot report success from database reservations when provider is unavailable", async () => {
-  const statusStore=load("../lib/storage-status-store.ts",{"@/lib/cloud-storage":limits,"@/lib/cloud-store":{observedR2Accounting:async()=>({usage:{live2d:{used:100,limit:8e9},other:{used:0,limit:2e9}}})},"@/lib/r2":{r2Inventory:async()=>{throw new Error("R2 access denied");}}});
+  const statusStore=load("../lib/storage-status-store.ts",{"@/lib/cloud-storage":limits,"@/lib/cloud-store":{observedR2Accounting:async()=>({usage:{live2d:{used:100,limit:8e9},other:{used:0,limit:8e9}}})},"@/lib/r2":{r2Inventory:async()=>{throw new Error("R2 access denied");}}});
   const result=await statusStore.getStorageStatus({rpc:async()=>({data:50,error:null})});
   assert.equal(result.supabase.usedBytes,50); assert.equal(result.r2.usedBytes,null); assert.equal(result.r2.connected,false);
 });
 const user = "00000000-0000-4000-8000-000000000001";
 const other = "00000000-0000-4000-8000-000000000002";
 const id = "00000000-0000-4000-8000-000000000003";
-test("billing quotas total exactly 10 decimal GB; 512 MiB model and part boundaries are inclusive", () => {
-  assert.equal(limits.STORAGE_LIMITS.live2d + limits.STORAGE_LIMITS.other, 10_000_000_000);
+test("shared budget leaves 2 decimal GB unused; 512 MiB model and part boundaries are inclusive", () => {
+  assert.equal(limits.STORAGE_BUDGET_BYTES, 8_000_000_000);
+  assert.equal(limits.STORAGE_BUFFER_BYTES, 2_000_000_000);
+  assert.equal(limits.STORAGE_BUDGET_BYTES + limits.STORAGE_BUFFER_BYTES, limits.STORAGE_CAPACITY_BYTES);
   assert.equal(limits.modelSize(536870912), 536870912);
   for (const bytes of [0, -1, 536870913, 1.5, "100", Infinity]) assert.throws(() => limits.modelSize(bytes));
   assert.equal(limits.partSize(536870912, 32), 16777216);
@@ -64,9 +67,9 @@ function fixture({ failDelete = false, failReserve = false, failInventory = fals
       eq(key, value) { filters.push((row) => row[key] === value); return q; }, in(key, values) { filters.push((row) => values.includes(row[key])); return q; }, order() { return q; }, range() { return q; }, limit() { return q; }, maybeSingle() { q.single = true; return q; },
       then(resolve, reject) {
         let result;
-        if (table === "vivian_storage_quotas") result = { data: [{ category: "live2d", used_bytes: [...rows.values()].filter((row) => row.category === "live2d").reduce((sum, row) => sum + row.byte_size, 0), limit_bytes: 8e9 }, { category: "other", used_bytes: 0, limit_bytes: 2e9 }], error: null };
+        if (table === "vivian_storage_quotas") result = { data: [{ category: "live2d", used_bytes: [...rows.values()].filter((row) => row.category === "live2d").reduce((sum, row) => sum + row.byte_size, 0), limit_bytes: 8e9 }, { category: "other", used_bytes: 0, limit_bytes: 8e9 }], error: null };
         else if (action === "insert") {
-          if (failReserve || (Array.isArray(payload) ? payload : [payload]).some(row => observed[`${row.category}_bytes`] + [...rows.values()].filter(r=>r.category===row.category).reduce((n,r)=>n+r.byte_size,0) + row.byte_size > limits.STORAGE_LIMITS[row.category])) result = { error: { code: "23514" } };
+          if (failReserve || (Array.isArray(payload) ? payload : [payload]).some(row => observed.live2d_bytes + observed.other_bytes + [...rows.values()].reduce((n,r)=>n+r.byte_size,0) + (Array.isArray(payload) ? payload : [payload]).reduce((n,r)=>n+r.byte_size,0) > limits.STORAGE_BUDGET_BYTES)) result = { error: { code: "23514" } };
           else { for (const row of Array.isArray(payload) ? payload : [payload]) rows.set(row.id, { state: "pending", created_at: new Date().toISOString(), ...row }); result = { error: null }; }
         } else {
           const found = [...rows.values()].filter((row) => filters.every((filter) => filter(row)));
@@ -84,7 +87,7 @@ function fixture({ failDelete = false, failReserve = false, failInventory = fals
     completeModelUpload: async (...args) => { calls.push(["complete", ...args]); }, deleteR2Object: async (...args) => { calls.push(["delete", ...args]); if (failDelete) throw new Error("R2 outage"); },
     signModelDownload: async (key) => { calls.push(["download", key]); return "https://private-download.example/signed"; }, putR2Image: async (...args) => { calls.push(["image", ...args]); },
   };
-  const store = load("../lib/cloud-store.ts", { "@/lib/cloud-storage": limits, "@/lib/r2": r2 });
+  const store = load("../lib/cloud-store.ts", { "@/lib/cloud-storage": limits, "@/lib/scenes": sceneContracts, "@/lib/r2": r2 });
   return { db, rows, calls, store };
 }
 const upload = { byteSize: 100, manifests: [{ path: "model.model3.json", name: "Model" }] };
@@ -149,8 +152,9 @@ test("failed remote deletion retains the reservation; successful cleanup release
   assert.equal((await ok.store.storageUsage(ok.db)).live2d.used, 0);
 });
 test("scene image and thumbnail share one atomic reservation in the other category", async () => {
-  const f = fixture(); await f.store.saveCloudSceneImages(f.db, user, `${user}/scene.webp`, Buffer.alloc(100), Buffer.alloc(10));
+  const f = fixture(); await f.store.saveCloudSceneImages(f.db, user, `${user}/scene.jpg`, Buffer.alloc(100), Buffer.alloc(10), "image/jpeg");
   assert.equal(f.rows.size, 2);
+  assert.deepEqual(f.calls.filter(call => call[0] === "image").map(call => [call[1], call[3]]), [[`${user}/scene.jpg`, "image/jpeg"], [`${user}/scene.thumb.webp`, "image/webp"]]);
   assert.ok([...f.rows.values()].every((row) => row.category === "other" && row.state === "ready"));
   assert.equal([...f.rows.values()].reduce((sum, row) => sum + row.byte_size, 0), 110);
   const full = fixture({ failReserve: true });

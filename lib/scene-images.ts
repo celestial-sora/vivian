@@ -74,7 +74,7 @@ export async function fetchSceneImage(value: unknown, signal = AbortSignal.timeo
   throw new SceneError("Image import failed.");
 }
 
-export async function normalizeSceneImage(bytes: Buffer, mime: string): Promise<{ image: Buffer; thumbnail: Buffer }> {
+export async function normalizeSceneImage(bytes: Buffer, mime: string): Promise<{ image: Buffer; thumbnail: Buffer; mime: string }> {
   if (!bytes.length || bytes.length > SCENE_MAX_BYTES) throw new SceneError("Choose an image under 8 MB.", 413);
   if (!SCENE_MIME_TYPES.includes(mime)) throw new SceneError("Choose a JPG, PNG, WebP or AVIF image.");
   try {
@@ -82,12 +82,12 @@ export async function normalizeSceneImage(bytes: Buffer, mime: string): Promise<
     const metadata = await input.metadata();
     const formats: Record<string, string> = { jpeg: "image/jpeg", png: "image/png", webp: "image/webp", heif: "image/avif" };
     if (!metadata.format || formats[metadata.format] !== mime || !metadata.width || !metadata.height || (metadata.pages ?? 1) > 1 || metadata.width > 12000 || metadata.height > 12000 || metadata.format === "heif" && metadata.compression !== "av1") throw new Error("Unsupported content");
-    // Rotation is applied; metadata is stripped by default. Decode/re-encode also
-    // excludes SVG, HTML and file payloads masquerading as images.
-    const image = await input.rotate().resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true }).webp({ quality: 82 }).timeout({ seconds: 5 }).toBuffer();
-    if (image.length > SCENE_MAX_BYTES) throw new Error("Encoded image too large");
-    const thumbnail = await sharp(image).resize({ width: 480, height: 300, fit: "inside", withoutEnlargement: true }).webp({ quality: 72 }).toBuffer();
-    return { image, thumbnail };
+    // Decode the complete raster to reject corrupt/mislabelled payloads. Store
+    // the original bytes: no resizing, recompression, or colour/profile changes.
+    // Orientation and source metadata remain part of the private original.
+    await input.clone().timeout({ seconds: 5 }).stats();
+    const thumbnail = await input.rotate().resize({ width: 480, height: 300, fit: "inside", withoutEnlargement: true }).webp({ quality: 72 }).timeout({ seconds: 5 }).toBuffer();
+    return { image: bytes, thumbnail, mime };
   } catch { throw new SceneError("The file is not a valid supported image, is animated, or has excessive dimensions."); }
 }
 

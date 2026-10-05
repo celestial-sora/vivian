@@ -33,11 +33,13 @@ test("user labels are mandatory, short, Unicode-safe and never derived from imag
   assert.equal(scenes.validateSceneLabel("😀".repeat(50)).length, 100);
   for (const label of [null, 12, "", "  ", "a".repeat(51), "a\nb", "<script>", "a\u202eb"]) assert.throws(() => scenes.validateSceneLabel(label));
 });
-test("image decoder validates real content, strips metadata and produces bounded WebP and thumbnail", async () => {
+test("scene originals preserve full resolution and bytes; thumbnails alone are resized", async () => {
   const original = await sharp({ create: { width: 2500, height: 2000, channels: 3, background: "red" } }).withMetadata().jpeg().toBuffer();
   const result = await images.normalizeSceneImage(original, "image/jpeg");
   const full = await sharp(result.image).metadata(); const thumb = await sharp(result.thumbnail).metadata();
-  assert.equal(full.format, "webp"); assert.equal(full.width, 1920); assert.equal(full.exif, undefined); assert.equal(full.icc, undefined);
+  assert.equal(full.format, "jpeg"); assert.equal(full.width, 2500); assert.equal(full.height, 2000);
+  assert.equal(result.mime, "image/jpeg"); assert.ok(result.image.equals(original));
+  assert.ok(thumb.exif === undefined && thumb.icc === undefined);
   assert.ok(thumb.width <= 480 && thumb.height <= 300);
   for (const [bytes, mime] of [[Buffer.from("<html>no</html>"), "image/png"], [Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'), "image/png"], [png, "text/html"], [png, "image/jpeg"], [Buffer.alloc(scenes.SCENE_MAX_BYTES + 1), "image/png"]]) await assert.rejects(images.normalizeSceneImage(bytes, mime));
 });

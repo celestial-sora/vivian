@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { preloadSceneImage } from "@/lib/use-scene-library";
+import { preloadSceneImage } from "@/lib/scene-preload";
 
 export function SceneBackground({ source }: { source: string }) {
   const [layers, setLayers] = useState<string[]>([]);

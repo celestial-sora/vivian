@@ -4,22 +4,9 @@ import { authFetch } from "@/lib/auth/fetch";
 import { notifyStorageChanged } from "@/lib/storage-status";
 import type { SceneDecision, ScenePreferences, VivianScene } from "@/lib/scenes";
 
-const loadedImages = new Map<string, Promise<void>>();
-export function preloadSceneImage(url: string): Promise<void> {
-  const previous = loadedImages.get(url);
-  if (previous) return previous;
-  const promise = new Promise<void>((resolve, reject) => {
-    const image = new Image();
-    const timer = window.setTimeout(() => { image.src = ""; reject(new Error("Scene image did not load.")); }, 10_000);
-    image.onload = () => { window.clearTimeout(timer); resolve(); };
-    image.onerror = () => { window.clearTimeout(timer); reject(new Error("Scene image is unavailable. Your current background was kept.")); };
-    image.src = url;
-  }).catch((error) => { loadedImages.delete(url); throw error; });
-  loadedImages.set(url, promise);
-  // Bound this session cache; the browser manages actual image memory.
-  if (loadedImages.size > 100) loadedImages.delete(loadedImages.keys().next().value!);
-  return promise;
-}
+import { preloadSceneImage, preloadSceneLibrary } from "@/lib/scene-preload";
+export { preloadSceneImage } from "@/lib/scene-preload";
+
 export async function sceneRequest<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await authFetch(path, { ...options, signal: options?.signal ?? AbortSignal.timeout(25_000) });
   const data = await response.json();
@@ -28,7 +15,8 @@ export async function sceneRequest<T>(path: string, options?: RequestInit): Prom
   return data as T;
 }
 const defaults: ScenePreferences = { autoScene: false, activeSceneId: null, preset: null, revision: "" };
-export function useSceneLibrary() {
+const noPresetImages: string[] = [];
+export function useSceneLibrary(presetImages: string[] = noPresetImages) {
   const [scenes, setScenes] = useState<VivianScene[]>([]);
   const [preferences, setPreferences] = useState<ScenePreferences>(defaults);
   const [ready, setReady] = useState(false);
@@ -48,6 +36,13 @@ export function useSceneLibrary() {
     void refresh().catch((error: Error) => { if (mounted.current) setNotice(error.message); });
     return () => { mounted.current = false; invalidateRequests(); };
   }, [refresh, invalidateRequests]);
+  useEffect(() => {
+    const abort = new AbortController();
+    const active = scenes.find((scene) => scene.id === preferences.activeSceneId);
+    const urls = [...(active ? [active.imageUrl] : []), ...scenes.map((scene) => scene.imageUrl), ...presetImages];
+    void preloadSceneLibrary(urls, abort.signal);
+    return () => { abort.abort(); };
+  }, [scenes, preferences.activeSceneId, presetImages]);
   async function updatePreferences(value: Partial<ScenePreferences>) {
     generation.current++;
     setBusy(true); setNotice(null);

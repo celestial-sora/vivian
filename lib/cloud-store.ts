@@ -2,6 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { StorageError, storageId, modelSize, modelManifests, STORAGE_LIMITS, r2ObjectCategory, type StorageCategory, type StorageUsage, type CloudModel } from "@/lib/cloud-storage";
+import { sceneThumbnailKey } from "@/lib/scenes";
 import { r2Configuration, r2Inventory, startModelUpload, signModelParts, completeModelUpload, deleteR2Object, signModelDownload, putR2Image } from "@/lib/r2";
 
 export interface StorageObject { id: string; user_id: string; category: StorageCategory; object_key: string; byte_size: number; state: "pending" | "ready" | "deleting"; upload_id: string | null; metadata: { manifests?: CloudModel["manifests"] }; created_at: string }
@@ -95,17 +96,17 @@ export async function removeCloudObject(db: SupabaseClient, userId: string, id: 
   // Only verified remote deletion releases the reservation. Failures keep it.
   check((await db.from("vivian_storage_objects").delete().eq("id", id).eq("user_id", userId).eq("state", "deleting")).error);
 }
-export async function saveCloudSceneImages(db: SupabaseClient, userId: string, key: string, image: Buffer, thumbnail: Buffer): Promise<void> {
+export async function saveCloudSceneImages(db: SupabaseClient, userId: string, key: string, image: Buffer, thumbnail: Buffer, mime = "image/webp"): Promise<void> {
   r2Configuration();
-  const values = [{ key, bytes: image }, { key: key.replace(/\.webp$/, ".thumb.webp"), bytes: thumbnail }];
+  const values = [{ key, bytes: image, mime }, { key: sceneThumbnailKey(key), bytes: thumbnail, mime: "image/webp" }];
   await refreshR2Accounting(db);
   // Reserve both files in one DB transaction before writing either one.
   check((await db.from("vivian_storage_objects").insert(values.map((value) => ({ id: randomUUID(), user_id: userId, category: "other", object_key: value.key, byte_size: value.bytes.length })))).error);
-  for (const value of values) await putR2Image(value.key, value.bytes);
+  for (const value of values) await putR2Image(value.key, value.bytes, value.mime);
   check((await db.from("vivian_storage_objects").update({ state: "ready" }).eq("user_id", userId).in("object_key", values.map((value) => value.key))).error);
 }
 export async function removeCloudSceneImages(db: SupabaseClient, userId: string, key: string): Promise<void> {
-  const { data, error } = await db.from("vivian_storage_objects").select("id").eq("user_id", userId).eq("category", "other").in("object_key", [key, key.replace(/\.webp$/, ".thumb.webp")]); check(error);
+  const { data, error } = await db.from("vivian_storage_objects").select("id").eq("user_id", userId).eq("category", "other").in("object_key", [key, sceneThumbnailKey(key)]); check(error);
   for (const row of data ?? []) await removeCloudObject(db, userId, row.id);
 }
 export async function cleanupCloudModels(db: SupabaseClient, userId: string): Promise<void> {

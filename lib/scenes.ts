@@ -31,3 +31,13 @@ export function validateSceneId(value: unknown): string {
   if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new SceneError("Scene not found.", 404);
   return value;
 }
+
+export function sceneThumbnailKey(key: string): string {
+  return key.replace(/\.[^/.]+$/, ".thumb.webp");
+}
+export function sceneImageExtension(mime: string): string {
+  const extensions: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/avif": "avif" };
+  const extension = extensions[mime];
+  if (!extension) throw new SceneError("Unsupported scene image type.");
+  return extension;
+}

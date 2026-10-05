@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { SceneError, SCENE_MAX_COUNT, validateSceneId, validateSceneLabel, type VivianScene, type ScenePreferences, type SceneDecision } from "@/lib/scenes";
+import { SceneError, SCENE_MAX_COUNT, sceneThumbnailKey, sceneImageExtension, validateSceneId, validateSceneLabel, type VivianScene, type ScenePreferences, type SceneDecision } from "@/lib/scenes";
 import { saveCloudSceneImages, removeCloudSceneImages } from "@/lib/cloud-store";
 import { getR2Image, modelObjectSize } from "@/lib/r2";
 
@@ -43,7 +43,7 @@ export async function getSceneLibrary(db: SupabaseClient, userId: string): Promi
   check(scenes.error); check(settings.error);
   return { scenes: (scenes.data ?? []).map((row) => present(row as SceneRow)), preferences: preferences(settings.data) };
 }
-const objectKeys = (key: string) => [key, key.replace(/\.webp$/, ".thumb.webp")];
+const objectKeys = (key: string) => [key, sceneThumbnailKey(key)];
 async function queueObject(db: SupabaseClient, userId: string, key: string, provider: "supabase" | "r2" = "supabase"): Promise<void> {
   const { error } = await db.from("vivian_scene_image_gc").upsert({ image_key: key, user_id: userId, storage_provider: provider }, { onConflict: "image_key", ignoreDuplicates: true }); check(error);
 }
@@ -54,7 +54,7 @@ async function removeObject(db: SupabaseClient, userId: string, key: string, pro
     if (!error) await db.from("vivian_scene_image_gc").delete().eq("image_key", key).eq("user_id", userId);
   } catch { /* Retried by cleanupSceneImages. */ }
 }
-export async function saveScene(db: SupabaseClient, userId: string, input: { label: string; sourceType?: "upload" | "url"; image?: Buffer; thumbnail?: Buffer }, id?: string): Promise<VivianScene> {
+export async function saveScene(db: SupabaseClient, userId: string, input: { label: string; sourceType?: "upload" | "url"; image?: Buffer; thumbnail?: Buffer; mime?: string }, id?: string): Promise<VivianScene> {
   input.label = validateSceneLabel(input.label);
   if (input.image && (!input.thumbnail || !input.sourceType)) throw new SceneError("Invalid scene image.");
   const previous = id ? await getScene(db, userId, id) : null;
@@ -65,18 +65,18 @@ export async function saveScene(db: SupabaseClient, userId: string, input: { lab
     if ((count ?? 0) >= SCENE_MAX_COUNT) throw new SceneError("Your scene library is full (50 scenes). Delete a scene first.");
   }
   const sceneId = previous?.id ?? randomUUID();
-  const newKey = input.image ? `${userId}/${randomUUID()}.webp` : null;
+  const newKey = input.image ? `${userId}/${randomUUID()}.${sceneImageExtension(input.mime ?? "image/webp")}` : null;
   const provider = process.env.SCENE_STORAGE_PROVIDER === "r2" ? "r2" : "supabase";
   if (newKey) await queueObject(db, userId, newKey, provider);
   let committed = false;
   try {
     if (newKey && input.image && input.thumbnail) {
-      const options = { contentType: "image/webp", cacheControl: "3600", upsert: false };
+      const options = { contentType: input.mime ?? "image/webp", cacheControl: "3600", upsert: false };
       // Serialize so failures cannot leave a second upload finishing after cleanup.
-      if (provider === "r2") await saveCloudSceneImages(db, userId, newKey, input.image, input.thumbnail);
+      if (provider === "r2") await saveCloudSceneImages(db, userId, newKey, input.image, input.thumbnail, input.mime);
       else {
         check((await db.storage.from(BUCKET).upload(newKey, input.image, options)).error);
-        check((await db.storage.from(BUCKET).upload(objectKeys(newKey)[1], input.thumbnail, options)).error);
+        check((await db.storage.from(BUCKET).upload(objectKeys(newKey)[1], input.thumbnail, { ...options, contentType: "image/webp" })).error);
       }
     }
     const values = { label: input.label, ...(newKey ? { image_key: newKey, source_type: input.sourceType, storage_provider: provider } : {}), updated_at: new Date().toISOString() };

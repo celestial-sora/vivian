@@ -42,6 +42,7 @@ const greetings = [
 const greeting = (): Message => ({ from: "vivian", text: greetings[Math.floor(Math.random() * greetings.length)] });
 const GREETING_PENDING = "Vivian กำลังคิดคำทักทายให้คุณ...";
 const BACKGROUNDS = { day: "/backgrounds/christmas-day-4x3.jpg", night: "/backgrounds/christmas-night-4x3.jpg" } as const;
+const PRESET_SCENE_IMAGES = Object.values(BACKGROUNDS);
 const APP_CODENAME = "Sandrome";
 const SILENT_WAV = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
 const CHAT_TIMEOUT_MS = 35000;
@@ -172,7 +173,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   const [editingMemoryId, setEditingMemoryId] = useState<number | null>(null);
   const [memoryDraft, setMemoryDraft] = useState("");
   const [backgroundMode, setBackgroundMode] = useState<keyof typeof BACKGROUNDS>("day");
-  const sceneLibrary = useSceneLibrary();
+  const sceneLibrary = useSceneLibrary(PRESET_SCENE_IMAGES);
   const activeCustomSceneId = sceneLibrary.preferences.activeSceneId;
   const selectedPreset = sceneLibrary.preferences.preset ?? backgroundMode;
   const [speechSpeed, setSpeechSpeed] = useState(.98);
@@ -1619,7 +1620,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
                 <input ref={modelZipRef} hidden type="file" accept=".zip" onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void importModels(files); }} />
                 <input ref={modelFolderRef} hidden type="file" multiple {...{ webkitdirectory: "", directory: "" }} onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void importModels(files); }} />
                 <p className="floating-note">{cloudLibrary ? "New imports are saved privately to cloud and cached on this device." : "Models are saved on this device while cloud sync is unavailable."} Include the .model3.json, .moc3, textures and animation files. Up to 512 MiB per package.</p>
-                {cloudLibrary && <p className="floating-note">Live2D storage: {(cloudLibrary.usage.live2d.used / 1e9).toFixed(2)} / 8 GB · Other files: {(cloudLibrary.usage.other.used / 1e9).toFixed(2)} / 2 GB. Uploads in progress count toward these limits.</p>}
+                {cloudLibrary && <p className="floating-note">Models + scenes: {((cloudLibrary.usage.live2d.used + cloudLibrary.usage.other.used) / 1e9).toFixed(2)} / 8 GB shared. 2 GB stays unused as a safety buffer. Pending uploads count toward the budget.</p>}
                 {activePackage && cloudLibrary && !cloudLibrary.models.some((model) => model.id === activePackage.id) && <button className="floating-option" type="button" disabled={modelImporting} onClick={() => { void saveActiveModelToCloud(); }}>Save this model to cloud</button>}
                 {activePackage && <button className="floating-option model-remove" type="button" disabled={modelImporting} onClick={() => { void removeActiveModel(); }}>{cloudLibrary?.models.some((model) => model.id === activePackage.id) ? "Delete this package from cloud and this device" : "Remove this package from browser"}</button>}
               </>}

@@ -6,13 +6,14 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 const run = promisify(execFile);
 const container = process.env.STORAGE_TEST_CONTAINER ?? "vivian-r2-postgres";
+const runtime = process.env.STORAGE_TEST_RUNTIME ?? "docker";
 const database = `vivian_storage_tests_${process.pid}`;
 const owner = "00000000-0000-4000-8000-000000000001";
 const other = "00000000-0000-4000-8000-000000000002";
 const dockerEnv = { ...process.env };
 for (const key of ["DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"]) delete dockerEnv[key];
 async function sql(query, db = database) {
-  const result = await run("docker", ["--host=unix:///var/run/docker.sock", "exec", container, "psql", "-U", "postgres", "-d", db, "-v", "ON_ERROR_STOP=1", "-Atq", "-c", query], { env: dockerEnv });
+  const result = await run(runtime, [...(runtime === "docker" ? ["--host=unix:///var/run/docker.sock"] : []), "exec", container, "psql", "-U", "postgres", "-d", db, "-v", "ON_ERROR_STOP=1", "-Atq", "-c", query], { env: dockerEnv });
   return result.stdout.trim();
 }
 before(async () => {
@@ -34,6 +35,7 @@ before(async () => {
   await sql(readFileSync(new URL("../supabase/migrations/20261005131311_private_r2_storage.sql", import.meta.url), "utf8"));
   await sql(readFileSync(new URL("../supabase/migrations/20261005133532_storage_status.sql", import.meta.url), "utf8"));
   await sql(readFileSync(new URL("../supabase/migrations/20261005135133_observed_r2_usage.sql", import.meta.url), "utf8"));
+  await sql(readFileSync(new URL("../supabase/migrations/20261005152924_shared_r2_budget.sql", import.meta.url), "utf8"));
 }, { timeout: 30000 });
 after(async () => { await sql(`drop database if exists ${database} with (force)`, "postgres"); });
 const insert = (bytes, category = "live2d", user = owner) => `insert into public.vivian_storage_objects(id,user_id,category,object_key,byte_size) values(gen_random_uuid(),'${user}','${category}',gen_random_uuid()::text,${bytes});`;
@@ -54,12 +56,13 @@ test("real SQL enforces model size, immutable reservations, and denies browser t
   assert.equal(await sql("select relrowsecurity from pg_class where relname='vivian_storage_objects'"), "t");
   await reset();
 });
-test("global quotas count both accounts and pending/deleting files; exact 2 GB accepted", async () => {
+test("shared budget counts both accounts, categories and pending/deleting files", async () => {
   await sql(Array.from({ length: 4 }, (_, index) => insert(500000000, "other", index % 2 ? other : owner)).join("\n"));
   await sql("update public.vivian_storage_objects set state='deleting'");
   assert.equal(await sql("select used_bytes from public.vivian_storage_quotas where category='other'"), "2000000000");
+  await sql(Array.from({ length: 12 }, () => insert(500000000)).join("\n"));
   await assert.rejects(sql(insert(1, "other")));
-  await sql(insert(1, "live2d"));
+  await assert.rejects(sql(insert(1, "live2d")));
   await sql("delete from public.vivian_storage_objects where category='other' and id=(select id from public.vivian_storage_objects where category='other' limit 1)");
   assert.equal(await sql("select used_bytes from public.vivian_storage_quotas where category='other'"), "1500000000");
   await reset();
@@ -67,17 +70,17 @@ test("global quotas count both accounts and pending/deleting files; exact 2 GB a
 test("parallel uploads cannot oversubscribe the last 100 MB of the global Live2D quota", async () => {
   await sql(Array.from({ length: 15 }, () => insert(500000000)).join("\n") + insert(400000000));
   const first = sql(`begin; ${insert(100000000)} select pg_sleep(0.5); commit;`);
-  const second = new Promise((resolve) => setTimeout(resolve, 100)).then(() => sql(insert(100000000, "live2d", other)));
+  const second = new Promise((resolve) => setTimeout(resolve, 100)).then(() => sql(insert(100000000, "other", other)));
   const results = await Promise.allSettled([first, second]);
   assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
   assert.match(results.find((result) => result.status === "rejected").reason.stderr, /Storage quota exceeded/);
-  assert.equal(await sql("select used_bytes from public.vivian_storage_quotas where category='live2d'"), "8000000000");
+  assert.equal(await sql("select sum(used_bytes) from public.vivian_storage_quotas"), "8000000000");
   await reset();
 });
-test("multi-row scene reservation rolls back entirely if thumbnail would cross other quota", async () => {
-  await sql(Array.from({ length: 3 }, () => insert(500000000, "other")).join("\n") + insert(499999990, "other"));
+test("multi-row scene reservation rolls back entirely if thumbnail would cross shared budget", async () => {
+  await sql(Array.from({ length: 15 }, () => insert(500000000, "live2d")).join("\n") + insert(499999990, "other"));
   await assert.rejects(sql(`insert into public.vivian_storage_objects(id,user_id,category,object_key,byte_size) values(gen_random_uuid(),'${owner}','other','scene-image',8),(gen_random_uuid(),'${owner}','other','scene-thumbnail',8)`));
-  assert.equal(await sql("select used_bytes from public.vivian_storage_quotas where category='other'"), "1999999990");
+  assert.equal(await sql("select used_bytes from public.vivian_storage_quotas where category='other'"), "499999990");
   assert.equal(await sql("select count(*) from public.vivian_storage_objects where object_key in ('scene-image','scene-thumbnail')"), "0");
   await reset();
 });
@@ -87,10 +90,12 @@ test("real bucket observations participate in concurrent reservations and are se
   await assert.rejects(sql("select public.vivian_storage_observe(-1,0)"));
   await sql("set role service_role; select public.vivian_storage_observe(6000000000,2100000000)");
   await assert.rejects(sql(insert(1,"other")));
-  await sql(Array.from({length:3},()=>insert(500000000)).join("\n")+insert(400000000));
-  const results=await Promise.allSettled([sql(insert(100000000)),sql(insert(100000000))]);
+  await assert.rejects(sql(insert(1,"live2d")));
+  await sql("select public.vivian_storage_observe(6000000000,100000000)");
+  await sql(Array.from({length:3},()=>insert(500000000)).join("\n")+insert(300000000));
+  const results=await Promise.allSettled([sql(insert(100000000)),sql(insert(100000000,"other"))]);
   assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
-  assert.equal(await sql("select used_bytes+external_bytes from public.vivian_storage_quotas where category='live2d'"),"8000000000");
+  assert.equal(await sql("select sum(used_bytes+external_bytes) from public.vivian_storage_quotas"),"8000000000");
   await reset();
   await sql("select public.vivian_storage_observe(0,0)");
   await sql(insert(1,"other")); await reset();

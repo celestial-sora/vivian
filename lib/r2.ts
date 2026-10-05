@@ -102,11 +102,11 @@ export async function deleteR2Object(key: string, uploadId?: string | null): Pro
 export async function signModelDownload(key: string): Promise<string> {
   return getSignedUrl(r2Client(), new GetObjectCommand({ Bucket: bucket(), Key: key, ResponseContentType: "application/zip", ResponseContentDisposition: "attachment" }), { expiresIn: 300 });
 }
-export async function putR2Image(key: string, bytes: Buffer): Promise<void> {
-  await r2Client().send(new PutObjectCommand({ Bucket: bucket(), Key: key, Body: bytes, ContentLength: bytes.length, ContentType: "image/webp" }), timeout());
+export async function putR2Image(key: string, bytes: Buffer, mime = "image/webp"): Promise<void> {
+  await r2Client().send(new PutObjectCommand({ Bucket: bucket(), Key: key, Body: bytes, ContentLength: bytes.length, ContentType: mime }), timeout());
 }
 export async function getR2Image(key: string): Promise<Blob> {
   const result = await r2Client().send(new GetObjectCommand({ Bucket: bucket(), Key: key }), timeout());
   if (!result.Body || (result.ContentLength ?? Infinity) > 8 * 1024 * 1024) throw new StorageError("Scene image unavailable.", 503);
-  return new Blob([new Uint8Array(await result.Body.transformToByteArray())], { type: "image/webp" });
+  return new Blob([new Uint8Array(await result.Body.transformToByteArray())], { type: result.ContentType ?? "image/webp" });
 }
