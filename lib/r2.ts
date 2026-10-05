@@ -1,5 +1,5 @@
 import "server-only";
-import { S3Client, CreateMultipartUploadCommand, UploadPartCommand, ListPartsCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, ListMultipartUploadsCommand, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, ListObjectsV2Command, CreateMultipartUploadCommand, UploadPartCommand, ListPartsCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand, ListMultipartUploadsCommand, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { StorageError, partSize } from "@/lib/cloud-storage";
 
@@ -14,6 +14,44 @@ export function r2Client() {
 }
 const bucket = () => r2Configuration().bucket;
 const timeout = () => ({ abortSignal: AbortSignal.timeout(20_000) });
+/** Fresh provider inventory, including incomplete multipart bytes. Never cached. */
+export async function r2Inventory(): Promise<Map<string, number>> {
+  const client = r2Client(), Bucket = bucket();
+  const options = { abortSignal: AbortSignal.timeout(10_000) };
+  const objects = new Map<string, number>();
+  const add = (key: string | undefined, size: number | undefined) => {
+    if (!key || typeof size !== "number" || !Number.isSafeInteger(size) || size < 0 || !Number.isSafeInteger((objects.get(key) ?? 0) + size)) throw new StorageError("R2 usage could not be verified.", 503);
+    objects.set(key, (objects.get(key) ?? 0) + size);
+  };
+  let token: string | undefined;
+  do {
+    const page = await client.send(new ListObjectsV2Command({ Bucket, MaxKeys: 1000, ContinuationToken: token }), options);
+    for (const object of page.Contents ?? []) add(object.Key, object.Size);
+    const next = page.IsTruncated ? page.NextContinuationToken : undefined;
+    if (page.IsTruncated && (!next || next === token)) throw new StorageError("R2 inventory is incomplete.", 503);
+    token = next;
+  } while (token);
+  let marker: string | undefined, uploadMarker: string | undefined;
+  do {
+    const page = await client.send(new ListMultipartUploadsCommand({ Bucket, MaxUploads: 1000, KeyMarker: marker, UploadIdMarker: uploadMarker }), options);
+    for (const upload of page.Uploads ?? []) {
+      if (!upload.Key || !upload.UploadId) throw new StorageError("R2 inventory is incomplete.", 503);
+      let partMarker: string | undefined;
+      do {
+        // A concurrent completion/abort makes this snapshot uncertain: fail closed.
+        const parts = await client.send(new ListPartsCommand({ Bucket, Key: upload.Key, UploadId: upload.UploadId, MaxParts: 1000, PartNumberMarker: partMarker }), options);
+        for (const part of parts.Parts ?? []) add(upload.Key, part.Size);
+        const next = parts.IsTruncated ? parts.NextPartNumberMarker : undefined;
+        if (parts.IsTruncated && (!next || next === partMarker)) throw new StorageError("R2 inventory is incomplete.", 503);
+        partMarker = next;
+      } while (partMarker);
+    }
+    const next = page.IsTruncated ? page.NextKeyMarker : undefined;
+    if (page.IsTruncated && (!next || (next === marker && page.NextUploadIdMarker === uploadMarker))) throw new StorageError("R2 inventory is incomplete.", 503);
+    marker = next; uploadMarker = page.NextUploadIdMarker;
+  } while (marker);
+  return objects;
+}
 function missing(error: unknown) { return !!error && typeof error === "object" && ["NoSuchUpload", "NoSuchKey", "NotFound"].includes(String((error as { name?: string }).name)); }
 export async function startModelUpload(key: string): Promise<string> {
   const result = await r2Client().send(new CreateMultipartUploadCommand({ Bucket: bucket(), Key: key, ContentType: "application/zip" }), timeout());

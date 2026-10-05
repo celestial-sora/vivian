@@ -46,3 +46,15 @@ export async function storageJson(request: Request): Promise<unknown> {
   for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.byteLength; }
   return JSON.parse(new TextDecoder().decode(buffer));
 }
+export function r2ObjectCategory(key: string): StorageCategory {
+  return key.startsWith("live2d/") ? "live2d" : "other";
+}
+export function inventoryUsage(objects: Map<string, number>): StorageUsage {
+  const usage: StorageUsage = { live2d: { used: 0, limit: STORAGE_LIMITS.live2d }, other: { used: 0, limit: STORAGE_LIMITS.other } };
+  for (const [key, size] of objects) {
+    const meter = usage[r2ObjectCategory(key)];
+    meter.used += size;
+    if (!Number.isSafeInteger(meter.used)) throw new StorageError("R2 usage could not be verified.", 503);
+  }
+  return usage;
+}

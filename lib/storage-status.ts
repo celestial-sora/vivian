@@ -2,7 +2,7 @@ import type { StorageUsage } from "@/lib/cloud-storage";
 export interface ProviderStorageStatus { usedBytes: number | null; limitBytes: number; connected: boolean }
 export interface StorageStatus {
   supabase: ProviderStorageStatus;
-  r2: ProviderStorageStatus & { categories: StorageUsage | null };
+  r2: ProviderStorageStatus & { categories: StorageUsage | null; quotaUsage: StorageUsage | null };
   checkedAt: string;
 }
 export function storagePercentage(usedBytes: number, limitBytes: number): number {

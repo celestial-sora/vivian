@@ -37,9 +37,10 @@ while the previous image is still stored.
    `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`.
    Keep credentials out of Git, client bundles, and chat messages.
 3. Apply `supabase/migrations/20261005131311_private_r2_storage.sql`, then
-   `supabase/migrations/20261005133532_storage_status.sql`, after the existing
+   `supabase/migrations/20261005133532_storage_status.sql`, then
+   `supabase/migrations/20261005135133_observed_r2_usage.sql`, after the existing
    scene migration. These add the quota ledger, provider-aware cleanup, and
-   service-only Supabase usage aggregate. Ensure the Supabase project is active and the existing server
+   service-only Supabase usage aggregate, and observed bucket accounting. Ensure the Supabase project is active and the existing server
    credentials/Auth configuration are valid.
 4. Set the bucket CORS policy from `config/r2-cors.json`. Replace the example
    production origin with the exact deployed origin; add native/web preview
@@ -83,8 +84,22 @@ Supabase usage is the sum of `storage.objects.metadata.size` across this project
 buckets. Its displayed capacity defaults to the current Free plan's decimal
 1 GB; set server-only `SUPABASE_STORAGE_LIMIT_BYTES` if the plan changes. This
 metric excludes the Postgres database size and other Supabase projects. R2 usage
-comes from the application's global reservation ledger, including multipart
-uploads and failed deletions; it does not include writes made outside the app.
+is fetched directly from the configured bucket on every check using paginated
+`ListObjectsV2`, `ListMultipartUploads`, and `ListParts`. It counts provider-returned
+object/part sizes, including files added outside the app. Keys under `live2d/`
+count as models; all other keys count as other files. No demo numbers or cached
+inventory are used by the production endpoint. Missing credentials, incomplete
+inventory, and network failures show Unavailable, never an assumed empty bucket.
+
+The additional **Quota committed** figures combine the live bucket inventory
+with app reservations: each key counts the larger of reserved and actual bytes.
+Thus a model still occupies its full reservation before all parts are uploaded.
+Every new model and R2 scene upload repeats the live check before writing.
+Additional observed bytes are recorded in a service-only SQL operation and
+participate in the same locked quota check as concurrent app reservations.
+Live checks failing block new uploads. Bucket listing is a snapshot, not an
+atomic lock across Cloudflare and Postgres; keep outside writers disabled in
+the dedicated bucket to preserve the application quota guarantee.
 
 ## Recovery and billing
 
@@ -97,7 +112,8 @@ and their quota reserved; an operator must delete the associated remote objects
 before deleting those ledger rows.
 
 Use a dedicated bucket and keep all application uploads through this ledger.
-Uploads made manually or by another application are outside these limits.
+Files uploaded manually are measured on the next live check and reduce available
+app quota, but this app cannot prevent another tool from writing into the bucket.
 R2's free allowance applies across the Cloudflare account, including any other
 buckets. The 8+2 GB storage cap does not cap billable request counts, Workers,
 Vercel traffic, or other services. Enable billing alerts and monitor the account;

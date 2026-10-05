@@ -1,8 +1,8 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { StorageError, storageId, modelSize, modelManifests, STORAGE_LIMITS, type StorageCategory, type StorageUsage, type CloudModel } from "@/lib/cloud-storage";
-import { r2Configuration, startModelUpload, signModelParts, completeModelUpload, deleteR2Object, signModelDownload, putR2Image } from "@/lib/r2";
+import { StorageError, storageId, modelSize, modelManifests, STORAGE_LIMITS, r2ObjectCategory, type StorageCategory, type StorageUsage, type CloudModel } from "@/lib/cloud-storage";
+import { r2Configuration, r2Inventory, startModelUpload, signModelParts, completeModelUpload, deleteR2Object, signModelDownload, putR2Image } from "@/lib/r2";
 
 export interface StorageObject { id: string; user_id: string; category: StorageCategory; object_key: string; byte_size: number; state: "pending" | "ready" | "deleting"; upload_id: string | null; metadata: { manifests?: CloudModel["manifests"] }; created_at: string }
 function check(error: { code?: string } | null): void {
@@ -10,15 +10,36 @@ function check(error: { code?: string } | null): void {
   if (error) throw new StorageError("Cloud storage is temporarily unavailable.", 503);
 }
 export async function storageUsage(db: SupabaseClient): Promise<StorageUsage> {
-  const { data, error } = await db.from("vivian_storage_quotas").select("category,used_bytes,limit_bytes"); check(error);
+  const { data, error } = await db.from("vivian_storage_quotas").select("category,used_bytes,external_bytes,limit_bytes"); check(error);
   if (!data || data.length !== 2) throw new StorageError("Cloud storage setup is incomplete.", 503);
   const result: StorageUsage = { live2d: { used: 0, limit: STORAGE_LIMITS.live2d }, other: { used: 0, limit: STORAGE_LIMITS.other } };
   for (const row of data) {
     const category = row.category as StorageCategory;
     if (!(category in STORAGE_LIMITS) || Number(row.limit_bytes) !== STORAGE_LIMITS[category]) throw new StorageError("Cloud storage quotas do not match the configured limits.", 503);
-    result[category].used = Number(row.used_bytes);
+    result[category].used = Number(row.used_bytes) + Number(row.external_bytes ?? 0);
   }
   return result;
+}
+/** Measure R2 before each new upload; preserve transactional reservations. */
+export async function observedR2Accounting(db: SupabaseClient, observed: Map<string, number>) {
+  const reserved = new Map<string, number>();
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await db.from("vivian_storage_objects").select("object_key,byte_size").order("id").range(offset, offset + 999); check(error);
+    if (!data) throw new StorageError("Storage reservations could not be checked.", 503);
+    for (const row of data) reserved.set(row.object_key, Number(row.byte_size));
+    if (data.length < 1000) break;
+  }
+  const external = { live2d: 0, other: 0 };
+  for (const [key, size] of observed) external[r2ObjectCategory(key)] += Math.max(0, size - (reserved.get(key) ?? 0));
+  const usage: StorageUsage = { live2d: { used: external.live2d, limit: STORAGE_LIMITS.live2d }, other: { used: external.other, limit: STORAGE_LIMITS.other } };
+  for (const [key, size] of reserved) usage[r2ObjectCategory(key)].used += size;
+  if (!Object.values(usage).every(meter => Number.isSafeInteger(meter.used) && meter.used >= 0)) throw new StorageError("Storage usage could not be verified.", 503);
+  return { external, usage };
+}
+export async function refreshR2Accounting(db: SupabaseClient): Promise<void> {
+  const { external } = await observedR2Accounting(db, await r2Inventory());
+  // Extra bucket bytes participate in the same locked SQL quota check as uploads.
+  check((await db.rpc("vivian_storage_observe", { live2d_bytes: external.live2d, other_bytes: external.other })).error);
 }
 export async function ownedObject(db: SupabaseClient, userId: string, id: string): Promise<StorageObject> {
   storageId(id);
@@ -38,6 +59,7 @@ export async function beginCloudModel(db: SupabaseClient, userId: string, input:
   const body = input as Record<string, unknown>;
   const bytes = modelSize(body.byteSize), manifests = modelManifests(body.manifests);
   const id = randomUUID(), key = `live2d/${userId}/${id}.zip`;
+  await refreshR2Accounting(db);
   // Reserve before making any remote write. SQL enforces the global budget.
   const { error } = await db.from("vivian_storage_objects").insert({ id, user_id: userId, category: "live2d", object_key: key, byte_size: bytes, metadata: { manifests } }); check(error);
   const uploadId = await startModelUpload(key);
@@ -76,6 +98,7 @@ export async function removeCloudObject(db: SupabaseClient, userId: string, id: 
 export async function saveCloudSceneImages(db: SupabaseClient, userId: string, key: string, image: Buffer, thumbnail: Buffer): Promise<void> {
   r2Configuration();
   const values = [{ key, bytes: image }, { key: key.replace(/\.webp$/, ".thumb.webp"), bytes: thumbnail }];
+  await refreshR2Accounting(db);
   // Reserve both files in one DB transaction before writing either one.
   check((await db.from("vivian_storage_objects").insert(values.map((value) => ({ id: randomUUID(), user_id: userId, category: "other", object_key: value.key, byte_size: value.bytes.length })))).error);
   for (const value of values) await putR2Image(value.key, value.bytes);

@@ -42,10 +42,10 @@ export function StorageStatusPanel() {
   return <div className="storage-status-panel">
     <p className="floating-note">Storage usage refreshes every 5 seconds while this panel is open.</p>
     <StorageMeter name="Supabase" used={status?.supabase.usedBytes ?? null} limit={status?.supabase.limitBytes ?? 1e9} description="File storage in this Supabase project." />
-    <StorageMeter name="Cloudflare R2" used={status?.r2.usedBytes ?? null} limit={status?.r2.limitBytes ?? 10e9} description={status?.r2.connected ? "Private storage · Includes uploads and files awaiting deletion." : "R2 connection is not available."} />
+    <StorageMeter name="Cloudflare R2" used={status?.r2.usedBytes ?? null} limit={status?.r2.limitBytes ?? 10e9} description={status?.r2.connected ? "Live bucket usage, including incomplete uploads." : "R2 connection is not available."} />
     <div className="storage-category-meters">
-      <StorageMeter name="Live2D models" used={status?.r2.categories?.live2d.used ?? null} limit={8e9} />
-      <StorageMeter name="Other files" used={status?.r2.categories?.other.used ?? null} limit={2e9} />
+      <StorageMeter name="Live2D models" used={status?.r2.categories?.live2d.used ?? null} limit={8e9} description={status?.r2.quotaUsage ? `Quota committed: ${formatStorageBytes(status.r2.quotaUsage.live2d.used)} (includes reserved uploads).` : "Upload quota could not be checked."} />
+      <StorageMeter name="Other files" used={status?.r2.categories?.other.used ?? null} limit={2e9} description={status?.r2.quotaUsage ? `Quota committed: ${formatStorageBytes(status.r2.quotaUsage.other.used)} (includes reserved uploads).` : "Upload quota could not be checked."} />
     </div>
     <div className="storage-status-footer"><small>{status ? `Checked ${new Date(status.checkedAt).toLocaleTimeString()}` : "Waiting for storage status…"}</small><button type="button" className="floating-option" disabled={refreshing} onClick={() => { void refresh(); }}>{refreshing ? "Refreshing…" : "Refresh"}</button></div>
     {notice && <p role="status" className="model-notice">{notice}</p>}

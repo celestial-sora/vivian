@@ -33,6 +33,7 @@ before(async () => {
   await sql(readFileSync(new URL("../supabase/migrations/20261003032056_dynamic_scenes.sql", import.meta.url), "utf8"));
   await sql(readFileSync(new URL("../supabase/migrations/20261005131311_private_r2_storage.sql", import.meta.url), "utf8"));
   await sql(readFileSync(new URL("../supabase/migrations/20261005133532_storage_status.sql", import.meta.url), "utf8"));
+  await sql(readFileSync(new URL("../supabase/migrations/20261005135133_observed_r2_usage.sql", import.meta.url), "utf8"));
 }, { timeout: 30000 });
 after(async () => { await sql(`drop database if exists ${database} with (force)`, "postgres"); });
 const insert = (bytes, category = "live2d", user = owner) => `insert into public.vivian_storage_objects(id,user_id,category,object_key,byte_size) values(gen_random_uuid(),'${user}','${category}',gen_random_uuid()::text,${bytes});`;
@@ -79,6 +80,20 @@ test("multi-row scene reservation rolls back entirely if thumbnail would cross o
   assert.equal(await sql("select used_bytes from public.vivian_storage_quotas where category='other'"), "1999999990");
   assert.equal(await sql("select count(*) from public.vivian_storage_objects where object_key in ('scene-image','scene-thumbnail')"), "0");
   await reset();
+});
+test("real bucket observations participate in concurrent reservations and are service-only", async () => {
+  await assert.rejects(sql("set role anon; select public.vivian_storage_observe(1,1)"));
+  await assert.rejects(sql("set role authenticated; select public.vivian_storage_observe(1,1)"));
+  await assert.rejects(sql("select public.vivian_storage_observe(-1,0)"));
+  await sql("set role service_role; select public.vivian_storage_observe(6000000000,2100000000)");
+  await assert.rejects(sql(insert(1,"other")));
+  await sql(Array.from({length:3},()=>insert(500000000)).join("\n")+insert(400000000));
+  const results=await Promise.allSettled([sql(insert(100000000)),sql(insert(100000000))]);
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  assert.equal(await sql("select used_bytes+external_bytes from public.vivian_storage_quotas where category='live2d'"),"8000000000");
+  await reset();
+  await sql("select public.vivian_storage_observe(0,0)");
+  await sql(insert(1,"other")); await reset();
 });
 test("scene deletion queues its original provider; Auth deletion keeps remote bytes reserved", async () => {
   await sql(`insert into public.vivian_scenes(id,user_id,label,image_key,source_type,storage_provider) values(gen_random_uuid(),'${owner}','Private scene','original.webp','upload','r2'); delete from public.vivian_scenes;`);

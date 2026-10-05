@@ -14,16 +14,22 @@ test("storage percentages use decimal capacities, retaining over-cap values and 
   assert.equal(statusFormat.formatStorageBytes(250000000), "250.0 MB");
 });
 test("Status reports provider failures as unknown rather than an empty zero-byte storage", async () => {
-  const statusStore = load("../lib/storage-status-store.ts", { "@/lib/cloud-storage": limits, "@/lib/cloud-store": { storageUsage: async () => { throw new Error("Database unavailable"); } }, "@/lib/r2": { r2Configuration: () => { throw new Error("Not configured"); } } });
+  const statusStore = load("../lib/storage-status-store.ts", { "@/lib/cloud-storage": limits, "@/lib/cloud-store": { observedR2Accounting: async () => { throw new Error("Database unavailable"); } }, "@/lib/r2": { r2Inventory: async () => { throw new Error("Not configured"); } } });
   const result = await statusStore.getStorageStatus({ rpc: async () => ({ data: null, error: { message: "unavailable" } }) });
   assert.equal(result.supabase.usedBytes, null); assert.equal(result.r2.usedBytes, null);
   assert.equal(result.r2.connected, false); assert.equal(result.r2.limitBytes, 10e9);
 });
-test("Status reads current Supabase bytes and global R2 reservations independently", async () => {
-  const statusStore = load("../lib/storage-status-store.ts", { "@/lib/cloud-storage": limits, "@/lib/cloud-store": { storageUsage: async () => ({live2d:{used:2e9,limit:8e9},other:{used:1e9,limit:2e9}}) }, "@/lib/r2": { r2Configuration: () => ({}) } });
+test("Status reads actual R2 bytes separately from larger reserved upload quotas", async () => {
+  const statusStore = load("../lib/storage-status-store.ts", { "@/lib/cloud-storage": limits, "@/lib/cloud-store": { observedR2Accounting: async () => ({usage:{live2d:{used:2e9,limit:8e9},other:{used:1e9,limit:2e9}}}) }, "@/lib/r2": { r2Inventory: async () => new Map([["live2d/model.zip",100],["external-file",250]]) } });
   const result = await statusStore.getStorageStatus({ rpc: async () => ({data:"250000000",error:null}) });
-  assert.equal(result.supabase.usedBytes,250000000); assert.equal(result.r2.usedBytes,3e9);
+  assert.equal(result.supabase.usedBytes,250000000); assert.equal(result.r2.usedBytes,350);
   assert.equal(result.r2.categories.live2d.limit,8e9);
+  assert.equal(result.r2.quotaUsage.live2d.used,2e9);
+});
+test("R2 Status cannot report success from database reservations when provider is unavailable", async () => {
+  const statusStore=load("../lib/storage-status-store.ts",{"@/lib/cloud-storage":limits,"@/lib/cloud-store":{observedR2Accounting:async()=>({usage:{live2d:{used:100,limit:8e9},other:{used:0,limit:2e9}}})},"@/lib/r2":{r2Inventory:async()=>{throw new Error("R2 access denied");}}});
+  const result=await statusStore.getStorageStatus({rpc:async()=>({data:50,error:null})});
+  assert.equal(result.supabase.usedBytes,50); assert.equal(result.r2.usedBytes,null); assert.equal(result.r2.connected,false);
 });
 const user = "00000000-0000-4000-8000-000000000001";
 const other = "00000000-0000-4000-8000-000000000002";
@@ -48,18 +54,19 @@ test("JSON body limits actual streamed bytes even without Content-Length", async
   await assert.rejects(limits.storageJson(new Request("https://app.example/api/models", { method: "POST", body: "a".repeat(32769) })), (error) => error.status === 413);
 });
 
-function fixture({ failDelete = false, failReserve = false } = {}) {
+function fixture({ failDelete = false, failReserve = false, failInventory = false, inventory = new Map() } = {}) {
   const rows = new Map(); const calls = [];
-  const db = { from(table) {
+  let observed = { live2d_bytes: 0, other_bytes: 0 };
+  const db = { rpc: async (name, args) => { assert.equal(name, "vivian_storage_observe"); observed = args; return {error:null}; }, from(table) {
     const filters = []; let action = "select", payload;
     const q = {
       select() { return q; }, insert(value) { action = "insert"; payload = value; return q; }, update(value) { action = "update"; payload = value; return q; }, delete() { action = "delete"; return q; },
-      eq(key, value) { filters.push((row) => row[key] === value); return q; }, in(key, values) { filters.push((row) => values.includes(row[key])); return q; }, order() { return q; }, limit() { return q; }, maybeSingle() { q.single = true; return q; },
+      eq(key, value) { filters.push((row) => row[key] === value); return q; }, in(key, values) { filters.push((row) => values.includes(row[key])); return q; }, order() { return q; }, range() { return q; }, limit() { return q; }, maybeSingle() { q.single = true; return q; },
       then(resolve, reject) {
         let result;
         if (table === "vivian_storage_quotas") result = { data: [{ category: "live2d", used_bytes: [...rows.values()].filter((row) => row.category === "live2d").reduce((sum, row) => sum + row.byte_size, 0), limit_bytes: 8e9 }, { category: "other", used_bytes: 0, limit_bytes: 2e9 }], error: null };
         else if (action === "insert") {
-          if (failReserve) result = { error: { code: "23514" } };
+          if (failReserve || (Array.isArray(payload) ? payload : [payload]).some(row => observed[`${row.category}_bytes`] + [...rows.values()].filter(r=>r.category===row.category).reduce((n,r)=>n+r.byte_size,0) + row.byte_size > limits.STORAGE_LIMITS[row.category])) result = { error: { code: "23514" } };
           else { for (const row of Array.isArray(payload) ? payload : [payload]) rows.set(row.id, { state: "pending", created_at: new Date().toISOString(), ...row }); result = { error: null }; }
         } else {
           const found = [...rows.values()].filter((row) => filters.every((filter) => filter(row)));
@@ -72,6 +79,7 @@ function fixture({ failDelete = false, failReserve = false } = {}) {
     }; return q;
   } };
   const r2 = {
+    r2Inventory: async () => { if(failInventory) throw new Error("R2 unavailable"); return inventory; },
     r2Configuration() {}, startModelUpload: async (key) => { calls.push(["start", key]); return "multipart-session"; }, signModelParts: async (...args) => { calls.push(["sign", ...args]); return []; },
     completeModelUpload: async (...args) => { calls.push(["complete", ...args]); }, deleteR2Object: async (...args) => { calls.push(["delete", ...args]); if (failDelete) throw new Error("R2 outage"); },
     signModelDownload: async (key) => { calls.push(["download", key]); return "https://private-download.example/signed"; }, putR2Image: async (...args) => { calls.push(["image", ...args]); },
@@ -92,6 +100,28 @@ test("folder archives preserve original bytes and Unicode paths; source ZIP is r
   assert.equal(files["empty.txt"].length, 0);
   const original = new File([archive], "model.zip");
   assert.equal(await browser.modelArchive(pack, original), original);
+});
+test("bucket bytes outside ledger block uploads; failed live checks cannot start uploads", async () => {
+  const full = fixture({ inventory: new Map([["live2d/manual.zip",8e9]]) });
+  await assert.rejects(full.store.beginCloudModel(full.db, user, upload), error => error.status === 409);
+  assert.equal(full.calls.length,0); assert.equal(full.rows.size,0);
+  const down = fixture({failInventory:true});
+  await assert.rejects(down.store.beginCloudModel(down.db,user,upload));
+  await assert.rejects(down.store.saveCloudSceneImages(down.db,user,"scene.webp",Buffer.alloc(10),Buffer.alloc(1)));
+  assert.equal(down.calls.length,0); assert.equal(down.rows.size,0);
+});
+test("inventory reconciliation counts external bytes without double-counting reserved model parts", async () => {
+  const inventory = new Map(); const f=fixture({inventory});
+  const started=await f.store.beginCloudModel(f.db,user,upload);
+  inventory.set(`live2d/${user}/${started.id}.zip`,60);
+  inventory.set("outside.webp",25);
+  let observation;
+  f.db.rpc=async(name,args)=>{ observation=args; return {error:null}; };
+  await f.store.refreshR2Accounting(f.db);
+  assert.equal(observation.live2d_bytes,0); assert.equal(observation.other_bytes,25);
+  inventory.set(`live2d/${user}/${started.id}.zip`,120);
+  await f.store.refreshR2Accounting(f.db);
+  assert.equal(observation.live2d_bytes,20);
 });
 test("quota denial happens before any R2 write or signed access", async () => {
   const f = fixture({ failReserve: true });
@@ -151,4 +181,25 @@ test("multipart completion validates remote part lengths and ignores client ETag
   remote[0].Size = 100; await r2.completeModelUpload("key", "session", 100);
   assert.equal(writes[0].MultipartUpload.Parts[0].ETag, '"real"');
   await r2.completeModelUpload("key", "session", 100); assert.equal(writes.length, 1);
+});
+test("live R2 inventory follows all object, upload and part pages and counts actual bytes", async () => {
+  const aws=require("@aws-sdk/client-s3"); const calls=[]; let invalid=false;
+  class S3 {
+    async send(command) {
+      calls.push(command.input);
+      if(command instanceof aws.ListObjectsV2Command) return command.input.ContinuationToken ? {Contents:[{Key:"manual.webp",Size:200}]} : {Contents:[{Key:"live2d/model.zip",Size:invalid?undefined:100}],IsTruncated:true,NextContinuationToken:"next"};
+      if(command instanceof aws.ListMultipartUploadsCommand) return command.input.KeyMarker ? {Uploads:[{Key:"other/upload.webp",UploadId:"second"}]} : {Uploads:[{Key:"live2d/model.zip",UploadId:"first"}],IsTruncated:true,NextKeyMarker:"marker",NextUploadIdMarker:"upload-marker"};
+      if(command instanceof aws.ListPartsCommand) {
+        if(command.input.UploadId==='second') return {Parts:[{Size:50}]};
+        return command.input.PartNumberMarker ? {Parts:[{Size:60}]} : {Parts:[{Size:40}],IsTruncated:true,NextPartNumberMarker:"1"};
+      }
+      throw new Error("Unexpected command");
+    }
+  }
+  const r2=load("../lib/r2.ts",{"@aws-sdk/client-s3":{...aws,S3Client:S3},"@aws-sdk/s3-request-presigner":{},"@/lib/cloud-storage":limits},{process:{env:{R2_ACCOUNT_ID:"a".repeat(32),R2_ACCESS_KEY_ID:"test",R2_SECRET_ACCESS_KEY:"test",R2_BUCKET_NAME:"test"}}});
+  const actual=await r2.r2Inventory();
+  assert.equal(actual.get("live2d/model.zip"),200); assert.equal(actual.get("manual.webp"),200); assert.equal(actual.get("other/upload.webp"),50);
+  assert.equal(limits.inventoryUsage(actual).live2d.used,200); assert.equal(limits.inventoryUsage(actual).other.used,250);
+  assert.equal(calls.length,7); invalid=true;
+  await assert.rejects(r2.r2Inventory(),error=>error.status===503);
 });
