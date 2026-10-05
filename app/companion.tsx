@@ -574,6 +574,52 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
           resources.dispose();
           return;
         }
+        // Replace the library's default head/eye tracking with a brief breeze
+        // that follows pointer or touch movement and then settles naturally.
+        model.autoInteract = false;
+        let windDirection = 0;
+        let windStrength = 0;
+        let windStartedAt = 0;
+        let previousPointer: { x: number; y: number; at: number } | undefined;
+        const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+        const onPointerMove = (event: PointerEvent) => {
+          const now = performance.now();
+          if (previousPointer) {
+            const elapsed = Math.max(16, now - previousPointer.at);
+            const dx = event.clientX - previousPointer.x;
+            const speed = Math.abs(dx) / elapsed;
+            if (!reducedMotion.matches && speed > 0.12) {
+              windDirection = Math.sign(dx);
+              windStrength = Math.min(1, Math.max(0.2, speed * 1.7));
+              windStartedAt = now;
+            }
+          }
+          previousPointer = { x: event.clientX, y: event.clientY, at: now };
+        };
+        const onPointerEnd = () => { previousPointer = undefined; };
+        canvasRef.current?.addEventListener("pointermove", onPointerMove, { passive: true });
+        canvasRef.current?.addEventListener("pointerleave", onPointerEnd, { passive: true });
+        canvasRef.current?.addEventListener("pointerup", onPointerEnd, { passive: true });
+        const onBeforeModelUpdate = () => {
+          const age = performance.now() - windStartedAt;
+          if (age < 1800 && !reducedMotion.matches) {
+            const envelope = windStrength * (1 - age / 1800);
+            const sway = Math.sin(age / 230) * envelope;
+            const core = model.internalModel.coreModel as CubismRestModel & { addParameterValueById(id: string, value: number): void };
+            core.addParameterValueById("ParamBodyAngleX", windDirection * sway * 3.5);
+            core.addParameterValueById("ParamAngleZ", windDirection * sway * 1.8);
+            core.addParameterValueById("ParamHairFront", windDirection * sway * 0.45);
+            core.addParameterValueById("ParamHairSide", windDirection * sway * 0.6);
+            core.addParameterValueById("ParamHairBack", windDirection * sway * 0.5);
+            core.addParameterValueById("ParamHairFluffy", windDirection * sway * 0.35);
+          }
+        };
+        model.internalModel.on("beforeModelUpdate", onBeforeModelUpdate);
+        model.once("destroy", () => {
+          canvasRef.current?.removeEventListener("pointermove", onPointerMove);
+          canvasRef.current?.removeEventListener("pointerleave", onPointerEnd);
+          canvasRef.current?.removeEventListener("pointerup", onPointerEnd);
+        });
         for (const texture of model.textures) texture.baseTexture.mipmap = PIXI.MIPMAP_MODES.OFF;
         modelRestStateRef.current = captureModelRestState(model.internalModel.coreModel as CubismRestModel);
         modelRef.current = model;

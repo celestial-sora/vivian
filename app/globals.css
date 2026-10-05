@@ -57,7 +57,7 @@ button { cursor: pointer; }
 .companion-stage::before { content: ""; position: absolute; z-index: 1; inset: 0; pointer-events: none; background: linear-gradient(180deg, #160d25aa 0%, transparent 22%, transparent 65%, #0c0616 100%); }
 .scene-background { position: absolute; z-index: 0; inset: 0; background-position: center; background-size: cover; background-repeat: no-repeat; animation: scene-fade-in .42s ease both; will-change: opacity; }
 @keyframes scene-fade-in { from { opacity: 0; transform: scale(1.015); } to { opacity: 1; transform: scale(1); } }
-.live2d-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.live2d-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
 .companion-brand { position: absolute; z-index: 3; top: max(22px, env(safe-area-inset-top)); left: clamp(24px, 4vw, 58px); display: flex; align-items: center; gap: 10px; color: #fff; font-family: Arial, sans-serif; font-size: clamp(27px, 3.1vw, 40px); letter-spacing: -.07em; font-weight: 500; }
 .brand-mark { display: block; width: 38px; height: 38px; border: 3px solid currentColor; border-right-color: transparent; border-radius: 87% 12% 87% 12%; transform: rotate(-37deg) skew(-10deg); }
 .speech-stack { position: absolute; z-index: 4; left: 50%; bottom: calc(max(22px, env(safe-area-inset-bottom)) + 96px); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 12px; width: min(78vw, 660px); pointer-events: none; }
