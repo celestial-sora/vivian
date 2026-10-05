@@ -19,6 +19,7 @@ interface WindOptions {
 }
 
 const clamp = (value: number): number => Math.max(-1, Math.min(1, value));
+const WIND_STRENGTH = 0.5;
 
 // Cubism's own physics knows which parameters move this artist's hair/clothes.
 // Change its wind before evaluation, rather than guessing output parameter IDs.
@@ -79,14 +80,14 @@ export function attachModelWind(canvas: HTMLCanvasElement, model: WindInternalMo
     }
     if (physicsWind && originalWind) {
       const flutter = 0.92 + 0.08 * Math.sin(at / 140);
-      physicsWind.x = originalWind.x + forceX * 0.55 * flutter;
-      physicsWind.y = originalWind.y + forceY * 0.2 * flutter;
+      physicsWind.x = originalWind.x + forceX * 0.55 * WIND_STRENGTH * flutter;
+      physicsWind.y = originalWind.y + forceY * 0.2 * WIND_STRENGTH * flutter;
     }
   };
   const applySway = (): void => {
-    if (bodyRoll >= 0) model.coreModel.addParameterValueByIndex(bodyRoll, forceX * (parameters.maximumValues[bodyRoll] - parameters.minimumValues[bodyRoll]) * 0.04);
+    if (bodyRoll >= 0) model.coreModel.addParameterValueByIndex(bodyRoll, forceX * (parameters.maximumValues[bodyRoll] - parameters.minimumValues[bodyRoll]) * 0.04 * WIND_STRENGTH);
     for (const index of fallbackHair) {
-      model.coreModel.addParameterValueByIndex(index, forceX * (parameters.maximumValues[index] - parameters.minimumValues[index]) * 0.18);
+      model.coreModel.addParameterValueByIndex(index, forceX * (parameters.maximumValues[index] - parameters.minimumValues[index]) * 0.18 * WIND_STRENGTH);
     }
   };
 

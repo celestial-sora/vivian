@@ -37,13 +37,14 @@ test("continuous movement keeps wind active, reverses direction, then settles", 
     h.pointer("pointermove", i * 12);
     h.frame();
   }
-  assert.ok(h.wind.x > 0.25, "wind must stay visible while pointer events continue");
+  assert.ok(h.wind.x > 0.12, "wind must stay active while pointer events continue");
+  assert.ok(h.wind.x - 0.07 <= 0.275, "fast swipes must stay within the gentler wind limit");
   assert.ok(h.writes.every(({ id }) => id === "ParamBodyAngleZ"), "artist physics outputs and eye tracking must not be overwritten");
   for (let i = 1; i <= 25; i++) {
     h.pointer("pointermove", 300 - i * 12);
     h.frame();
   }
-  assert.ok(h.wind.x < -0.1, "reversing movement must reverse the breeze");
+  assert.ok(h.wind.x < 0.02, "reversing movement must reverse the breeze relative to the artist's baseline");
   h.pointer("pointerup", 0);
   for (let i = 0; i < 40; i++) h.frame(250);
   assert.equal(h.wind.x, 0.07);
@@ -58,7 +59,7 @@ test("vertical touch swipes create wind and reduced motion immediately restores 
     h.pointer("pointermove", 0, 300 - i * 15);
     h.frame();
   }
-  assert.ok(h.wind.y > 0.05);
+  assert.ok(h.wind.y > 0);
   h.reduce();
   h.frame();
   assert.deepEqual(h.wind, { x: 0.07, y: -0.02 });

@@ -326,3 +326,8 @@ Follow up only where needed: verify live Google provider configuration and produ
 - `lib/model-wind.ts` now smooths pointer velocity into Cubism's actual physics wind before physics evaluation, so the artist's custom hair/clothing rig responds. Horizontal and vertical swipes decay smoothly after release. Supported body roll and standard hair parameters provide gentle sway/fallback without driving eye tracking or guessing custom parameters. Reduced Motion restores the original wind; model destruction removes pointer/frame listeners and restores the artist's wind settings.
 - Localhost serves an existing temporary preview checkout at `/tmp/vivian-dev-bypass.RNjDUd`, not this source directory. Synced only the wind source changes there and reloaded the browser to verify the final version. Actual right/left drag gestures visibly move the loaded model's hair and outfit in opposite directions. Evidence: `/tmp/vivian-wind-right.png` and `/tmp/vivian-wind-left.png`. Physical touch/Safari behavior remains unverified.
 - Passed all 18 model tests, including four wind regression tests, TypeScript, focused ESLint, and whitespace checks. Provider services and cloud memory were not used for regression tests. Existing expression-layer edits remain separate from this change.
+
+## 2026-10-06 — Gentler interaction wind
+
+- At the user's request, halved the interaction wind strength for physics, body roll and fallback hair sway. Updated the temporary localhost preview and reloaded it; the same fast drag now produces a smaller hair/outfit movement. Evidence: `/tmp/vivian-wind-gentle.png`.
+- Updated the existing wind assertions for the gentler response and bounded maximum force. All four wind regression tests, TypeScript and whitespace checks passed.
