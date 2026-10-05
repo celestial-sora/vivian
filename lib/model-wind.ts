@@ -80,14 +80,16 @@ export function attachModelWind(canvas: HTMLCanvasElement, model: WindInternalMo
     }
     if (physicsWind && originalWind) {
       const flutter = 0.92 + 0.08 * Math.sin(at / 140);
-      physicsWind.x = originalWind.x + forceX * 0.55 * WIND_STRENGTH * flutter;
+      // The rig's horizontal wind/roll convention is opposite screen drag:
+      // map it so a leftward swipe carries hair and clothing left.
+      physicsWind.x = originalWind.x - forceX * 0.55 * WIND_STRENGTH * flutter;
       physicsWind.y = originalWind.y + forceY * 0.2 * WIND_STRENGTH * flutter;
     }
   };
   const applySway = (): void => {
-    if (bodyRoll >= 0) model.coreModel.addParameterValueByIndex(bodyRoll, forceX * (parameters.maximumValues[bodyRoll] - parameters.minimumValues[bodyRoll]) * 0.04 * WIND_STRENGTH);
+    if (bodyRoll >= 0) model.coreModel.addParameterValueByIndex(bodyRoll, -forceX * (parameters.maximumValues[bodyRoll] - parameters.minimumValues[bodyRoll]) * 0.04 * WIND_STRENGTH);
     for (const index of fallbackHair) {
-      model.coreModel.addParameterValueByIndex(index, forceX * (parameters.maximumValues[index] - parameters.minimumValues[index]) * 0.18 * WIND_STRENGTH);
+      model.coreModel.addParameterValueByIndex(index, -forceX * (parameters.maximumValues[index] - parameters.minimumValues[index]) * 0.18 * WIND_STRENGTH);
     }
   };
 

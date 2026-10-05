@@ -331,3 +331,9 @@ Follow up only where needed: verify live Google provider configuration and produ
 
 - At the user's request, halved the interaction wind strength for physics, body roll and fallback hair sway. Updated the temporary localhost preview and reloaded it; the same fast drag now produces a smaller hair/outfit movement. Evidence: `/tmp/vivian-wind-gentle.png`.
 - Updated the existing wind assertions for the gentler response and bounded maximum force. All four wind regression tests, TypeScript and whitespace checks passed.
+
+## 2026-10-06 — Wind follows horizontal drag direction
+
+- Corrected horizontal physics wind, body roll and fallback hair sway signs so screen-space R → L movement carries the rig left and L → R carries it right. Wind follows movement rather than toggling at the screen midpoint; the reduced strength and release decay remain.
+- Updated the existing direction assertions, including body roll agreement. Four wind tests, TypeScript and whitespace checks passed. Verified both swipe directions on the currently loaded model in the local browser; evidence: `/tmp/vivian-wind-direction-left.png` and `/tmp/vivian-wind-direction-right.png`.
+- Restarted the temporary loopback preview in a detached process with its existing development auth bypass. Browser automation initially rejected navigation from its cached `data:` error page; the user reopened localhost and visual verification then completed.

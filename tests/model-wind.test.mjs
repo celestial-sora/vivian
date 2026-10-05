@@ -37,14 +37,16 @@ test("continuous movement keeps wind active, reverses direction, then settles", 
     h.pointer("pointermove", i * 12);
     h.frame();
   }
-  assert.ok(h.wind.x > 0.12, "wind must stay active while pointer events continue");
-  assert.ok(h.wind.x - 0.07 <= 0.275, "fast swipes must stay within the gentler wind limit");
+  assert.ok(h.wind.x < 0.02, "rightward movement must produce negative rig wind while movement continues");
+  assert.ok(Math.abs(h.wind.x - 0.07) <= 0.275, "fast swipes must stay within the gentler wind limit");
   assert.ok(h.writes.every(({ id }) => id === "ParamBodyAngleZ"), "artist physics outputs and eye tracking must not be overwritten");
+  assert.ok(h.writes.some(({ value }) => value < 0), "body roll must follow the same rig direction as wind");
   for (let i = 1; i <= 25; i++) {
     h.pointer("pointermove", 300 - i * 12);
     h.frame();
   }
-  assert.ok(h.wind.x < 0.02, "reversing movement must reverse the breeze relative to the artist's baseline");
+  assert.ok(h.wind.x > 0.12, "leftward movement must produce positive rig wind");
+  assert.ok(h.writes.at(-1).value > 0, "leftward body roll must agree with wind");
   h.pointer("pointerup", 0);
   for (let i = 0; i < 40; i++) h.frame(250);
   assert.equal(h.wind.x, 0.07);
@@ -71,7 +73,7 @@ test("switching models restores wind and removes both pointer and frame listener
   h.pointer("pointerdown", 0);
   h.pointer("pointermove", 100);
   h.frame(100);
-  assert.ok(h.wind.x > 0.07);
+  assert.ok(h.wind.x < 0.07);
   h.dispose();
   assert.deepEqual(h.wind, { x: 0.07, y: -0.02 });
   assert.equal(h.model.listenerCount("beforeMotionUpdate"), 0);
@@ -86,7 +88,7 @@ test("models without physics use only supported hair parameters", () => {
   h.pointer("pointerdown", 0);
   h.pointer("pointermove", 100);
   h.frame(100);
-  assert.ok(h.writes.some(({ value }) => value > 0));
+  assert.ok(h.writes.some(({ value }) => value < 0));
   assert.ok(h.writes.every(({ id }) => id === "ParamHairSide"));
   h.dispose();
 });
