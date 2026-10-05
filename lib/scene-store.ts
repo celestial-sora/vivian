@@ -2,10 +2,12 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { SceneError, SCENE_MAX_COUNT, validateSceneId, validateSceneLabel, type VivianScene, type ScenePreferences, type SceneDecision } from "@/lib/scenes";
+import { saveCloudSceneImages, removeCloudSceneImages } from "@/lib/cloud-store";
+import { getR2Image, modelObjectSize } from "@/lib/r2";
 
 const BUCKET = "vivian-scenes";
-const COLUMNS = "id,user_id,label,image_key,source_type,created_at,updated_at";
-interface SceneRow { id: string; user_id: string; label: string; image_key: string; source_type: "upload" | "url"; created_at: string; updated_at: string }
+const COLUMNS = "id,user_id,label,image_key,source_type,storage_provider,created_at,updated_at";
+interface SceneRow { id: string; user_id: string; label: string; image_key: string; source_type: "upload" | "url"; storage_provider?: "supabase" | "r2"; created_at: string; updated_at: string }
 interface PreferenceRow { user_id: string; auto_scene: boolean; active_scene_id: string | null; preset: "day" | "night" | null; revision: string }
 export interface SceneContext { userId: string; autoScene: boolean; activeSceneId: string | null; revision: string; scenes: Array<{ id: string; label: string }> }
 
@@ -42,13 +44,13 @@ export async function getSceneLibrary(db: SupabaseClient, userId: string): Promi
   return { scenes: (scenes.data ?? []).map((row) => present(row as SceneRow)), preferences: preferences(settings.data) };
 }
 const objectKeys = (key: string) => [key, key.replace(/\.webp$/, ".thumb.webp")];
-async function queueObject(db: SupabaseClient, userId: string, key: string): Promise<void> {
-  const { error } = await db.from("vivian_scene_image_gc").upsert({ image_key: key, user_id: userId }, { onConflict: "image_key", ignoreDuplicates: true }); check(error);
+async function queueObject(db: SupabaseClient, userId: string, key: string, provider: "supabase" | "r2" = "supabase"): Promise<void> {
+  const { error } = await db.from("vivian_scene_image_gc").upsert({ image_key: key, user_id: userId, storage_provider: provider }, { onConflict: "image_key", ignoreDuplicates: true }); check(error);
 }
-async function removeObject(db: SupabaseClient, userId: string, key: string): Promise<void> {
+async function removeObject(db: SupabaseClient, userId: string, key: string, provider: "supabase" | "r2" = "supabase"): Promise<void> {
   // Queue entries survive outages; cleanup is safe even if the upload failed.
   try {
-    const { error } = await db.storage.from(BUCKET).remove(objectKeys(key));
+    const { error } = provider === "r2" ? (await removeCloudSceneImages(db, userId, key), { error: null }) : await db.storage.from(BUCKET).remove(objectKeys(key));
     if (!error) await db.from("vivian_scene_image_gc").delete().eq("image_key", key).eq("user_id", userId);
   } catch { /* Retried by cleanupSceneImages. */ }
 }
@@ -64,16 +66,20 @@ export async function saveScene(db: SupabaseClient, userId: string, input: { lab
   }
   const sceneId = previous?.id ?? randomUUID();
   const newKey = input.image ? `${userId}/${randomUUID()}.webp` : null;
-  if (newKey) await queueObject(db, userId, newKey);
+  const provider = process.env.SCENE_STORAGE_PROVIDER === "r2" ? "r2" : "supabase";
+  if (newKey) await queueObject(db, userId, newKey, provider);
   let committed = false;
   try {
     if (newKey && input.image && input.thumbnail) {
       const options = { contentType: "image/webp", cacheControl: "3600", upsert: false };
       // Serialize so failures cannot leave a second upload finishing after cleanup.
-      check((await db.storage.from(BUCKET).upload(newKey, input.image, options)).error);
-      check((await db.storage.from(BUCKET).upload(objectKeys(newKey)[1], input.thumbnail, options)).error);
+      if (provider === "r2") await saveCloudSceneImages(db, userId, newKey, input.image, input.thumbnail);
+      else {
+        check((await db.storage.from(BUCKET).upload(newKey, input.image, options)).error);
+        check((await db.storage.from(BUCKET).upload(objectKeys(newKey)[1], input.thumbnail, options)).error);
+      }
     }
-    const values = { label: input.label, ...(newKey ? { image_key: newKey, source_type: input.sourceType } : {}), updated_at: new Date().toISOString() };
+    const values = { label: input.label, ...(newKey ? { image_key: newKey, source_type: input.sourceType, storage_provider: provider } : {}), updated_at: new Date().toISOString() };
     const query = previous
       ? db.from("vivian_scenes").update(values).eq("id", sceneId).eq("user_id", userId).eq("image_key", previous.image_key)
       : db.from("vivian_scenes").insert({ ...values, id: sceneId, user_id: userId });
@@ -83,7 +89,7 @@ export async function saveScene(db: SupabaseClient, userId: string, input: { lab
     committed = true;
     if (newKey) {
       await db.from("vivian_scene_image_gc").delete().eq("image_key", newKey).eq("user_id", userId);
-      if (previous) await removeObject(db, userId, previous.image_key);
+      if (previous) await removeObject(db, userId, previous.image_key, previous.storage_provider);
     }
     return present(data as SceneRow);
   } catch (error) {
@@ -92,7 +98,7 @@ export async function saveScene(db: SupabaseClient, userId: string, input: { lab
       // object that might now be referenced; the durable queue checks later.
       try {
         const result = await db.from("vivian_scenes").select("id").eq("user_id", userId).eq("image_key", newKey).maybeSingle();
-        if (!result.error && !result.data) await removeObject(db, userId, newKey);
+        if (!result.error && !result.data) await removeObject(db, userId, newKey, provider);
       } catch { /* Cleanup queue remains. */ }
     }
     throw error;
@@ -102,7 +108,7 @@ export async function deleteScene(db: SupabaseClient, userId: string, id: string
   const scene = await getScene(db, userId, id);
   // FK atomically clears the active scene; trigger atomically queues the image.
   const { error } = await db.from("vivian_scenes").delete().eq("user_id", userId).eq("id", id); check(error);
-  await removeObject(db, userId, scene.image_key);
+  await removeObject(db, userId, scene.image_key, scene.storage_provider);
 }
 export async function setScenePreferences(db: SupabaseClient, userId: string, value: unknown): Promise<ScenePreferences> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new SceneError("Invalid scene settings.");
@@ -130,6 +136,7 @@ export async function setScenePreferences(db: SupabaseClient, userId: string, va
 }
 export async function getSceneImage(db: SupabaseClient, userId: string, id: string, thumbnail: boolean): Promise<Blob> {
   const scene = await getScene(db, userId, id);
+  if (scene.storage_provider === "r2") return getR2Image(objectKeys(scene.image_key)[thumbnail ? 1 : 0]);
   const { data, error } = await db.storage.from(BUCKET).download(objectKeys(scene.image_key)[thumbnail ? 1 : 0]); check(error);
   if (!data) throw new SceneError("Scene image unavailable.", 404);
   return data;
@@ -137,11 +144,11 @@ export async function getSceneImage(db: SupabaseClient, userId: string, id: stri
 export async function cleanupSceneImages(userId: string): Promise<void> {
   try {
     const db = sceneClient(AbortSignal.timeout(5000));
-    const { data, error } = await db.from("vivian_scene_image_gc").select("image_key").eq("user_id", userId).lt("created_at", new Date(Date.now() - 3600_000).toISOString()).limit(20);
+    const { data, error } = await db.from("vivian_scene_image_gc").select("image_key,storage_provider").eq("user_id", userId).lt("created_at", new Date(Date.now() - 3600_000).toISOString()).limit(20);
     if (error) return;
     for (const item of data ?? []) {
       const references = await db.from("vivian_scenes").select("id").eq("user_id", userId).eq("image_key", item.image_key).maybeSingle();
-      if (!references.error && !references.data) await removeObject(db, userId, item.image_key);
+      if (!references.error && !references.data) await removeObject(db, userId, item.image_key, item.storage_provider);
     }
   } catch { /* Non-critical deferred work. */ }
 }
@@ -164,7 +171,8 @@ export async function executeSceneDecision(context: SceneContext | null, decisio
     const db = sceneClient(AbortSignal.timeout(600));
     const scene = await getScene(db, context.userId, decision.id);
     // Check storage availability without downloading the background during chat.
-    if ((await db.storage.from(BUCKET).info(scene.image_key)).error) return unchanged;
+    if (scene.storage_provider === "r2") { if (await modelObjectSize(scene.image_key) === null) return unchanged; }
+    else if ((await db.storage.from(BUCKET).info(scene.image_key)).error) return unchanged;
     // Atomic preference check protects manual selections/toggle changes while
     // JEV or the main provider was running, and handles concurrent replies.
     const { data, error } = await db.from("vivian_scene_preferences").update({ active_scene_id: scene.id, preset: null, revision: randomUUID(), updated_at: new Date().toISOString() }).eq("user_id", context.userId).eq("auto_scene", true).eq("revision", context.revision).select("active_scene_id").maybeSingle();

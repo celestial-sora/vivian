@@ -39,11 +39,12 @@ after(async () => {
 });
 
 const call = (path, options = {}) => fetch(`${base}${path}`, { redirect: "manual", ...options });
+const modelRoutes = [["/api/storage/status", "GET"], ["/api/models", "GET"], ["/api/models", "POST"], ["/api/models/00000000-0000-4000-8000-000000000001", "GET"], ["/api/models/00000000-0000-4000-8000-000000000001", "POST"], ["/api/models/00000000-0000-4000-8000-000000000001", "DELETE"], ["/api/models/00000000-0000-4000-8000-000000000001/parts?first=1", "POST"]];
 const routes = [["/api/chat", "POST"], ["/api/stt", "POST"], ["/api/tts", "POST"], ["/api/memory", "GET"], ["/api/memory", "POST"], ["/api/memory", "PATCH"], ["/api/memory", "DELETE"], ["/api/jev/status", "GET"], ["/api/scenes", "GET"], ["/api/scenes", "POST"], ["/api/scenes/preview", "POST"], ["/api/scenes/preferences", "PATCH"], ["/api/scenes/00000000-0000-4000-8000-000000000001", "PATCH"], ["/api/scenes/00000000-0000-4000-8000-000000000001", "DELETE"], ["/api/scenes/00000000-0000-4000-8000-000000000001/image", "GET"]];
 
 test("signed-out users cannot access the companion or any protected API", async () => {
   assert.equal((await call("/")).headers.get("location"), "/login");
-  for (const [path, method] of routes) {
+  for (const [path, method] of [...routes, ...modelRoutes]) {
     const response = await call(path, { method, headers: { "x-user-email": "suphloeksangko@gmail.com", cookie: "email=suphloeksangko@gmail.com" } });
     assert.equal(response.status, 401, `${method} ${path}`);
     assert.equal((await response.json()).code, "AUTH_REQUIRED");
@@ -61,7 +62,7 @@ test("both verified accounts are allowed and cached/forged identity claims are i
     assert.match(await home.text(), /companion-shell/);
   }
   for (const kind of ["denied", "unverified"]) {
-    for (const [path, method] of routes) {
+    for (const [path, method] of [...routes, ...modelRoutes]) {
       const response = await call(path, { method, headers: { cookie: sessionCookie(kind, { forgedEmail: "suphloeksangko@gmail.com" }) } });
       assert.equal(response.status, 403, `${kind}: ${method} ${path}`);
     }

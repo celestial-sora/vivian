@@ -1,4 +1,4 @@
-/** Private browser-only Cubism packages. No model file is uploaded to a server. */
+/** Validated Cubism packages; originals stay in IndexedDB and may sync to private R2. */
 import type { TextureBudget, TexturePlan } from "./model-textures";
 export interface ModelAsset { path: string; blob: Blob }
 export interface ModelMotion { group: string; index: number; name: string }
@@ -11,7 +11,7 @@ export interface LocalModel {
   motions: ModelMotion[];
   previewPath?: string;
 }
-export interface ModelPackage { id: string; assets: ModelAsset[]; models: LocalModel[] }
+export interface ModelPackage { id: string; assets: ModelAsset[]; models: LocalModel[]; cloudOwner?: string }
 export interface CubismManifest {
   Version: number;
   FileReferences: {
@@ -219,7 +219,7 @@ async function storage<T>(mode: IDBTransactionMode, operation: (store: IDBObject
 }
 export async function loadModelPackages(): Promise<ModelPackage[]> {
   const packages = await storage<ModelPackage[]>("readonly", (store) => store.getAll());
-  return Promise.all(packages.map((pack) => inspectPackage(pack.assets, pack.id)));
+  return Promise.all(packages.map(async (pack) => ({ ...await inspectPackage(pack.assets, pack.id), ...(pack.cloudOwner ? { cloudOwner: pack.cloudOwner } : {}) })));
 }
 export const saveModelPackage = (pack: ModelPackage): Promise<IDBValidKey> => storage("readwrite", (store) => store.put(pack));
 export const removeModelPackage = (id: string): Promise<undefined> => storage("readwrite", (store) => store.delete(id));

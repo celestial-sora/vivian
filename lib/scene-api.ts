@@ -5,6 +5,7 @@ import { requireApiAccess } from "@/lib/auth/server";
 import { rateLimit, rateLimitedResponse } from "@/lib/rate-limit";
 import { cleanupSceneImages, sceneClient } from "@/lib/scene-store";
 import { SceneError } from "@/lib/scenes";
+import { StorageError } from "@/lib/cloud-storage";
 
 export async function sceneApi(request: Request, action: (db: SupabaseClient, userId: string) => Promise<Response>): Promise<Response> {
   let userId: string | null = null;
@@ -22,7 +23,7 @@ export async function sceneApi(request: Request, action: (db: SupabaseClient, us
     if (request.method !== "GET" || new URL(request.url).pathname === "/api/scenes") after(() => cleanupSceneImages(owner));
     return response;
   } catch (error) {
-    const status = error instanceof SceneError ? error.status : error instanceof SyntaxError || error instanceof TypeError ? 400 : 503;
-    return Response.json({ error: error instanceof SceneError ? error.message : status === 400 ? "Invalid scene data or image import failed. Check the URL/file and try again." : "Scene storage is temporarily unavailable. Please try again.", status }, { status, headers: { "Cache-Control": "private, no-store" } });
+    const status = error instanceof SceneError || error instanceof StorageError ? error.status : error instanceof SyntaxError || error instanceof TypeError ? 400 : 503;
+    return Response.json({ error: error instanceof SceneError || error instanceof StorageError ? error.message : status === 400 ? "Invalid scene data or image import failed. Check the URL/file and try again." : "Scene storage is temporarily unavailable. Please try again.", status }, { status, headers: { "Cache-Control": "private, no-store" } });
   }
 }

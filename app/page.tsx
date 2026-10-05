@@ -10,5 +10,5 @@ export default async function Home(): Promise<React.JSX.Element> {
     const reason = error.status === 403 ? "access_denied" : error.status === 503 ? "auth_unavailable" : "";
     redirect(reason ? `/login?error=${reason}` : "/login");
   }
-  return <Companion accountEmail={user.email ?? ""} />;
+  return <Companion accountEmail={user.email ?? ""} accountId={user.id} />;
 }

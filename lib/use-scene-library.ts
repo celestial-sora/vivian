@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "@/lib/auth/fetch";
+import { notifyStorageChanged } from "@/lib/storage-status";
 import type { SceneDecision, ScenePreferences, VivianScene } from "@/lib/scenes";
 
 const loadedImages = new Map<string, Promise<void>>();
@@ -23,6 +24,7 @@ export async function sceneRequest<T>(path: string, options?: RequestInit): Prom
   const response = await authFetch(path, { ...options, signal: options?.signal ?? AbortSignal.timeout(25_000) });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error ?? "Could not save scene changes. Please try again.");
+  if (options?.method && options.method !== "GET") notifyStorageChanged();
   return data as T;
 }
 const defaults: ScenePreferences = { autoScene: false, activeSceneId: null, preset: null, revision: "" };

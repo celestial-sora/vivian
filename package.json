@@ -14,10 +14,14 @@
     "test:auth": "node --experimental-strip-types --test tests/auth-policy.test.mjs",
     "test:auth:integration": "node --test tests/auth.integration.test.mjs",
     "test:models": "node --experimental-strip-types --test tests/local-models.test.mjs tests/model-textures.test.mjs tests/model-rest-state.test.mjs",
+    "test:storage": "node --test tests/cloud-storage.test.mjs",
+    "test:storage:postgres": "node --test tests/storage-postgres.test.mjs",
     "test:scenes": "node --experimental-strip-types --test tests/scenes.test.mjs",
     "test:scenes:integration": "node --test tests/scenes.integration.test.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1146.0",
+    "@aws-sdk/s3-request-presigner": "3.1146.0",
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.117.2",
     "fflate": "^0.8.3",

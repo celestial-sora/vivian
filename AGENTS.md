@@ -351,7 +351,7 @@ This section is the current source of truth for continuing work. Read it before 
 
 ### Live2D facts that must not be changed casually
 
-- Purchased model assets remain excluded from Git and deployments. Character → Models imports licensed ZIPs/folders into private browser IndexedDB via `lib/local-models.ts`; models never upload to a server.
+- Purchased model assets remain excluded from Git and deployment bundles. Character → Models validates licensed ZIPs/folders and caches originals in IndexedDB via `lib/local-models.ts`. When R2 is configured, user-authorized private cloud sync uses `lib/cloud-models.ts`; see `docs/private-r2-storage.md`. The global hard quotas are 8 decimal GB for Live2D and 2 decimal GB for other R2 files, including pending/deleting objects. Per-model archive and expanded limits remain 512 MiB.
 - `app/companion.tsx` reads imported manifests and discovers undeclared `.exp3.json`/`.motion3.json` files for expressions and motion groups, resolves every runtime file to a revocable local Blob URL, and supports multiple manifests/outfits per package. No bundled model is required for text chat.
 - Preview images use supplied preview/icon/thumbnail files, excluding texture atlases; models without one get a renderer snapshot. All model URLs are released on switching/unmount.
 - `lib/model-textures.ts` plans atlas sizes against GPU limits and a 512 MiB desktop / 128 MiB mobile RGBA budget. Auto resizes only temporary render copies, one atlas at a time; originals stay unchanged. Original quality must still respect GPU texture limits. Recognizable pose expressions also appear in Pose.

@@ -6,12 +6,14 @@ import { authFetch } from "@/lib/auth/fetch";
 import { decayCompanionState, type CompanionState, defaultCompanionState, normalizeMood, moodLabel, type Mood } from "@/lib/companion";
 import { MODEL_CONFIG, type ModelKey } from "@/lib/models";
 import { createModelResources, importModelFiles, loadModelPackages, removeModelPackage, saveModelPackage, type ModelPackage, type ModelMotion } from "@/lib/local-models";
+import { getCloudModels, cloudModelPlaceholder, uploadCloudModel, downloadCloudModel, deleteCloudModel, type CloudLibrary } from "@/lib/cloud-models";
 import { useSceneLibrary } from "@/lib/use-scene-library";
 import { SceneManager } from "@/app/components/scene-manager";
 import { SceneBackground } from "@/app/components/scene-background";
+import { StorageStatusPanel } from "@/app/components/storage-status";
 import type { SceneDecision } from "@/lib/scenes";
 
-type IconName = "config" | "info" | "wardrobe" | "chevron" | "mic" | "micOff" | "video" | "clip" | "message" | "send" | "close" | "memory" | "sound" | "language" | "gallery" | "scene" | "plus" | "search" | "sun" | "moon";
+type IconName = "config" | "info" | "wardrobe" | "chevron" | "mic" | "micOff" | "video" | "clip" | "message" | "send" | "close" | "memory" | "sound" | "language" | "status" | "scene" | "plus" | "search" | "sun" | "moon";
 
 function Icon({ name, size = 24 }: { name: IconName; size?: number }) {
   const iconUrl = `/icons/${name}.svg`;
@@ -20,7 +22,7 @@ function Icon({ name, size = 24 }: { name: IconName; size?: number }) {
 
 type Message = { from: "me" | "vivian"; text: string; timestamp?: string };
 type Memory = { id: number; memory: string; category: string; importance: number };
-type Panel = "conversations" | "memories" | "character" | "scenes" | "voice" | "gallery" | "settings";
+type Panel = "conversations" | "memories" | "character" | "scenes" | "voice" | "status" | "settings";
 type Conversation = { id: string; title: string; updatedAt: number; messages: Message[] };
 const CONVERSATIONS_KEY = "vivian-conversations-v1";
 type SpeechLanguage = "global" | "th" | "en" | "ja" | "ko" | "zh";
@@ -74,7 +76,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T) {
   ]).finally(() => { if (timer) window.clearTimeout(timer); });
 }
 
-export default function Companion({ accountEmail }: { accountEmail: string }) {
+export default function Companion({ accountEmail, accountId }: { accountEmail: string; accountId: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pixiAppRef = useRef<any>(null);
   const modelRef = useRef<any>(null);
@@ -153,6 +155,7 @@ export default function Companion({ accountEmail }: { accountEmail: string }) {
   const [modelImporting, setModelImporting] = useState(false);
   const [modelStatus, setModelStatus] = useState<"empty" | "loading" | "ready" | "error">("empty");
   const [modelNotice, setModelNotice] = useState<string | null>(null);
+  const [cloudLibrary, setCloudLibrary] = useState<CloudLibrary | null>(null);
   const [modelPreview, setModelPreview] = useState<string | null>(null);
   const [textureQuality, setTextureQuality] = useState<"auto" | "original">("auto");
   const [textureSummary, setTextureSummary] = useState<string | null>(null);
@@ -230,16 +233,34 @@ export default function Companion({ accountEmail }: { accountEmail: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    void loadModelPackages().then((packages) => {
+    const controller = new AbortController();
+    void (async () => {
+      const [local, remote] = await Promise.allSettled([loadModelPackages(), getCloudModels(AbortSignal.any([controller.signal, AbortSignal.timeout(12_000)]))]);
       if (cancelled) return;
+      const cloud = remote.status === "fulfilled" ? remote.value : null;
+      setCloudLibrary(cloud);
+      const packages = (local.status === "fulfilled" ? local.value : []).filter((pack) => !pack.cloudOwner || (pack.cloudOwner === accountId && (!cloud || cloud.models.some((model) => model.id === pack.id))));
+      for (const model of cloud?.models ?? []) if (!packages.some((pack) => pack.id === model.id)) packages.push(cloudModelPlaceholder(model));
       setModelPackages(packages);
+      if (!cloud) setModelNotice("Cloud sync is unavailable. Models saved on this device still work.");
       const saved = localStorage.getItem("vivian-local-model");
-      setActiveModelId(packages.some((pack) => pack.models.some((model) => model.id === saved)) ? saved : packages[0]?.models[0]?.id ?? null);
-    }).catch(() => {
-      if (!cancelled) setModelNotice("Browser storage is unavailable. Enable site storage to save a model.");
+      const selected = packages.some((pack) => pack.models.some((model) => model.id === saved)) ? saved : packages[0]?.models[0]?.id ?? null;
+      const pack = packages.find((entry) => entry.models.some((model) => model.id === selected));
+      if (pack && !pack.assets.length && cloud) {
+        try {
+          const downloaded = await downloadCloudModel(cloud.models.find((model) => model.id === pack.id)!, cloud.userId, controller.signal);
+          if (cancelled) return;
+          packages.splice(packages.indexOf(pack), 1, downloaded);
+          setModelPackages([...packages]);
+          await saveModelPackage(downloaded).catch(() => {});
+        } catch { if (!cancelled) setModelNotice("Could not load the cloud model. Select it again to retry."); return; }
+      }
+      if (!cancelled) setActiveModelId(selected);
+    })().catch(() => {
+      if (!cancelled) setModelNotice("Model storage is unavailable. Please try again.");
     }).finally(() => { if (!cancelled) setModelsReady(true); });
-    return () => { cancelled = true; };
-  }, []);
+    return () => { cancelled = true; controller.abort(); };
+  }, [accountId]);
 
   useEffect(() => {
     if (!modelsReady) return;
@@ -267,15 +288,57 @@ export default function Companion({ accountEmail }: { accountEmail: string }) {
       setModelPackages((current) => [...current, pack]);
       setActiveModelId(pack.models[0].id);
       void navigator.storage?.persist?.().catch(() => {});
+      if (cloudLibrary) await syncModelToCloud(pack, files.length === 1 && /\.zip$/i.test(files[0].name) ? files[0] : undefined);
     } catch (error) {
       setModelNotice(error instanceof Error ? error.message : "Could not import this model.");
     } finally { setModelImporting(false); }
+  }
+
+  async function syncModelToCloud(pack: ModelPackage, originalZip?: File) {
+    const saved = await uploadCloudModel(pack, setModelNotice, originalZip);
+    // Commit the new cache before discarding the existing local-only package.
+    await saveModelPackage(saved.pack).catch(() => {});
+    setModelPackages((current) => current.map((entry) => entry.id === pack.id ? saved.pack : entry));
+    setActiveModelId(saved.pack.models.find((model) => model.manifestPath === activeModel?.manifestPath)?.id ?? saved.pack.models[0].id);
+    setCloudLibrary((current) => current ? { ...current, usage: saved.usage, models: [...current.models, { id: saved.pack.id, byteSize: 0, manifests: saved.pack.models.map((model) => ({ path: model.manifestPath, name: model.name })) }] } : current);
+    await removeModelPackage(pack.id).catch(() => {});
+    setModelNotice("Model saved privately to cloud.");
+  }
+
+  async function saveActiveModelToCloud() {
+    if (!activePackage || modelImporting || !cloudLibrary) return;
+    setModelImporting(true);
+    try { await syncModelToCloud(activePackage); }
+    catch (error) { setModelNotice(error instanceof Error ? error.message : "Could not save model to cloud."); }
+    finally { setModelImporting(false); }
+  }
+
+  async function chooseModel(id: string) {
+    if (modelImporting) return;
+    const pack = modelPackages.find((entry) => entry.models.some((model) => model.id === id));
+    if (!pack) return;
+    setModelNotice(null);
+    if (!pack.assets.length && cloudLibrary) {
+      setModelImporting(true); setModelNotice("Loading model from private cloud storage…");
+      try {
+        const downloaded = await downloadCloudModel(cloudLibrary.models.find((model) => model.id === pack.id)!, cloudLibrary.userId);
+        await saveModelPackage(downloaded).catch(() => {});
+        setModelPackages((current) => current.map((entry) => entry.id === pack.id ? downloaded : entry));
+        setActiveModelId(id); setModelNotice(null);
+      } catch (error) { setModelNotice(error instanceof Error ? error.message : "Could not load model."); }
+      finally { setModelImporting(false); }
+    } else setActiveModelId(id);
   }
 
   async function removeActiveModel() {
     if (!activePackage || modelImporting) return;
     setModelImporting(true);
     try {
+      if (cloudLibrary?.models.some((model) => model.id === activePackage.id)) {
+        await deleteCloudModel(activePackage.id);
+        setCloudLibrary((current) => current ? { ...current, models: current.models.filter((model) => model.id !== activePackage.id) } : current);
+        void getCloudModels().then(setCloudLibrary).catch(() => {});
+      }
       await removeModelPackage(activePackage.id);
       const remaining = modelPackages.filter((pack) => pack.id !== activePackage.id);
       setModelPackages(remaining);
@@ -1450,7 +1513,7 @@ export default function Companion({ accountEmail }: { accountEmail: string }) {
     { key: "character", label: "Character", icon: "wardrobe" },
     { key: "scenes", label: "Scenes", icon: "scene" },
     { key: "voice", label: "Voice", icon: "sound" },
-    { key: "gallery", label: "Gallery", icon: "gallery" },
+    { key: "status", label: "Status", icon: "status" },
     { key: "settings", label: "Settings", icon: "config" },
   ];
 
@@ -1546,7 +1609,7 @@ export default function Companion({ accountEmail }: { accountEmail: string }) {
                   <strong>{activeModel?.name ?? "Your character awaits"}</strong>
                   <small>{modelStatus === "loading" ? "Loading model…" : modelStatus === "ready" ? `${activeModel?.expressions.length ?? 0} expressions · ${activeModel?.motions.length ?? 0} motions` : "Import your Live2D model"}</small>
                 </div>
-                {modelPackages.length > 0 && <label className="model-select-label">Model<select value={activeModelId ?? ""} disabled={modelImporting} onChange={(event) => { setModelNotice(null); setActiveModelId(event.target.value); }}>{modelPackages.flatMap((pack) => pack.models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>))}</select></label>}
+                {modelPackages.length > 0 && <label className="model-select-label">Model<select value={activeModelId ?? ""} disabled={modelImporting} onChange={(event) => { void chooseModel(event.target.value); }}>{modelPackages.flatMap((pack) => pack.models.map((model) => <option key={model.id} value={model.id}>{model.name}{cloudLibrary?.models.some((entry) => entry.id === pack.id) ? " · Cloud" : " · This device"}</option>))}</select></label>}
                 {activeModel && <label className="model-select-label">Texture quality<select value={textureQuality} onChange={(event) => { setModelNotice(null); setTextureQuality(event.target.value as "auto" | "original"); }}><option value="auto">Auto · fit this device</option><option value="original">Original textures</option></select></label>}
                 {textureSummary && <p className="floating-note">{textureSummary}. Original files stay unchanged.</p>}
                 <div className="model-import-actions">
@@ -1555,8 +1618,10 @@ export default function Companion({ accountEmail }: { accountEmail: string }) {
                 </div>
                 <input ref={modelZipRef} hidden type="file" accept=".zip" onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void importModels(files); }} />
                 <input ref={modelFolderRef} hidden type="file" multiple {...{ webkitdirectory: "", directory: "" }} onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void importModels(files); }} />
-                <p className="floating-note">Stored privately in this browser. Include the .model3.json, .moc3, textures and animation files. Up to 512 MB.</p>
-                {activePackage && <button className="floating-option model-remove" type="button" disabled={modelImporting} onClick={() => { void removeActiveModel(); }}>Remove this package from browser</button>}
+                <p className="floating-note">{cloudLibrary ? "New imports are saved privately to cloud and cached on this device." : "Models are saved on this device while cloud sync is unavailable."} Include the .model3.json, .moc3, textures and animation files. Up to 512 MiB per package.</p>
+                {cloudLibrary && <p className="floating-note">Live2D storage: {(cloudLibrary.usage.live2d.used / 1e9).toFixed(2)} / 8 GB · Other files: {(cloudLibrary.usage.other.used / 1e9).toFixed(2)} / 2 GB. Uploads in progress count toward these limits.</p>}
+                {activePackage && cloudLibrary && !cloudLibrary.models.some((model) => model.id === activePackage.id) && <button className="floating-option" type="button" disabled={modelImporting} onClick={() => { void saveActiveModelToCloud(); }}>Save this model to cloud</button>}
+                {activePackage && <button className="floating-option model-remove" type="button" disabled={modelImporting} onClick={() => { void removeActiveModel(); }}>{cloudLibrary?.models.some((model) => model.id === activePackage.id) ? "Delete this package from cloud and this device" : "Remove this package from browser"}</button>}
               </>}
               {characterTab === "expression" && <>
                 <button type="button" className="floating-option" disabled={modelStatus !== "ready"} onClick={() => { void selectExpression(null); }}>Reset expression</button>
@@ -1573,7 +1638,7 @@ export default function Companion({ accountEmail }: { accountEmail: string }) {
             </>}
             {panel === "scenes" && <><SceneManager library={sceneLibrary}/><p className="floating-note">Default backgrounds</p><div className="scene-grid">{(Object.keys(BACKGROUNDS) as Array<keyof typeof BACKGROUNDS>).map((scene) => <button key={scene} type="button" disabled={sceneLibrary.busy || !sceneLibrary.ready} className={!activeCustomSceneId && selectedPreset === scene ? "is-selected" : ""} onClick={() => selectPresetScene(scene)}><span style={{ backgroundImage: `url(${BACKGROUNDS[scene]})` }}/><strong>Christmas {scene}</strong></button>)}</div></>}
             {panel === "voice" && <><button type="button" className="floating-option" onClick={() => setMuted((value) => !value)}><Icon name="sound" size={18}/> Vivian voice <strong>{muted ? "Off" : "On"}</strong></button><label className="floating-range">Speaking speed <span>{speechSpeed.toFixed(2)}×</span><input type="range" min="0.8" max="1.2" step="0.02" value={speechSpeed} onChange={(event) => setSpeechSpeed(Number(event.target.value))}/></label><button type="button" className="floating-option" onClick={() => setLanguageOpen(true)}><Icon name="language" size={18}/> Speech language <strong>{speechLanguage.toUpperCase()}</strong></button><button type="button" className="floating-option" onClick={toggleRecording}><Icon name="mic" size={18}/> Microphone <strong>{recording ? "Listening" : "Start"}</strong></button></>}
-             {panel === "gallery" && <SceneManager library={sceneLibrary}/>}
+             {panel === "status" && <StorageStatusPanel/>}
               {panel === "settings" && <><div className="custom-instructions"><strong>Reset Vivian</strong><p>ล้างความจำ แชต Mood และความสัมพันธ์บนคลาวด์ที่ใช้ร่วมกัน รวมถึงแชตและคำแนะนำส่วนตัวบนอุปกรณ์นี้</p>{resetConfirming ? <div role="alertdialog" aria-label="ยืนยันรีเซ็ต Vivian"><p>ข้อมูลนี้จะถูกลบถาวรจากคลาวด์ที่ใช้ร่วมกันและแชตบนอุปกรณ์นี้ โมเดล การตั้งค่าเสียง และบัญชีล็อกอินจะยังอยู่</p><button type="button" className="floating-option" disabled={sending || resetting} onClick={() => { void resetVivian(); }}>ยืนยันรีเซ็ต Vivian</button><button type="button" className="floating-option" onClick={() => setResetConfirming(false)}>ยกเลิก</button></div> : <button type="button" className="floating-option" disabled={sending || resetting} onClick={() => setResetConfirming(true)}>{resetting ? "กำลังรีเซ็ต…" : "Reset memories and companion"}</button>}{resetNotice && <p role="status">{resetNotice}</p>}</div><div className="custom-instructions"><strong>Custom instructions</strong><p>How should Vivian speak with you?</p><textarea value={customInstructions} maxLength={2000} onChange={(event) => { const value = event.target.value; setCustomInstructions(value); window.localStorage.setItem("vivian-custom-instructions", value); }} placeholder="Call me… Speak in Thai…"/></div><div className="custom-instructions jev-settings"><strong>Jev API <span>{jevConfigured === undefined ? "กำลังตรวจสอบ" : jevConfigured === null ? "ตรวจสอบไม่ได้" : jevConfigured ? "ตั้งค่าแล้ว" : "ยังไม่ได้ตั้งค่า"}</span></strong><p>ตั้งค่า TYPESAFE_API_KEY ใน Environment Variables ของ Vercel หรือ .env.local เพื่อช่วยตัดสินใจเรื่องความจำ เครื่องมือ ภาพ และข้อมูลล่าสุด โดย Vivian ยังตอบด้วยโมเดลสนทนาหลัก</p></div><button type="button" className="floating-option" onClick={() => setLanguageOpen(true)}><Icon name="language" size={18}/> Language <strong>{speechLanguage.toUpperCase()}</strong></button><button type="button" onClick={() => setInfoOpen(true)} className="floating-option"><Icon name="info" size={18}/> About Vivian</button></>}
             {panel === "settings" && <form action="/auth/signout" method="post" className="account-settings"><div><small>ลงชื่อเข้าใช้ด้วย</small><p>{accountEmail}</p></div><button type="submit">ออกจากระบบ <span aria-hidden="true">↗</span></button></form>}
           </div>

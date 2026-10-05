@@ -117,7 +117,7 @@ function storeFixture() {
       async info(key) { return { error: !objects.has(key) || failure === "info" ? new Error("missing") : null }; },
     };
   } } };
-  const sceneModule = load("../lib/scene-store.ts", { "@/lib/scenes": scenes, "@supabase/supabase-js": { createClient: () => db } }, { process: { env: { SUPABASE_URL: "fixture", SUPABASE_SERVICE_ROLE_KEY: "fixture" } } });
+  const sceneModule = load("../lib/scene-store.ts", { "@/lib/scenes": scenes, "@/lib/cloud-store": {}, "@/lib/r2": {}, "@supabase/supabase-js": { createClient: () => db } }, { process: { env: { SUPABASE_URL: "fixture", SUPABASE_SERVICE_ROLE_KEY: "fixture" } } });
   return { db, rows, objects, operations, module: sceneModule, fail: (value) => { failure = value; } };
 }
 const image = await images.normalizeSceneImage(png, "image/png");

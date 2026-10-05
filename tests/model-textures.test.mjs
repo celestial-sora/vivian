@@ -2,6 +2,17 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { planTextures, readTextureSize } from '../lib/model-textures.ts';
 const MB = 1024 * 1024;
+test('32K source textures retain original dimensions while temporary render copies fit the GPU', async () => {
+  const source = {width:32768,height:32768};
+  const plan = planTextures([source], {maxDimension:8192,budgetBytes:128*MB});
+  assert.deepEqual(plan[0].source, source);
+  assert.ok(plan[0].render.width <= 8192);
+  assert.ok(plan[0].render.width * plan[0].render.height * 4 <= 128*MB);
+  assert.deepEqual(source, {width:32768,height:32768});
+  const header = new Uint8Array(24); header.set([137,80,78,71,13,10,26,10]);
+  const view = new DataView(header.buffer); view.setUint32(16,32768); view.setUint32(20,32768);
+  assert.deepEqual(await readTextureSize(new Blob([header])), source);
+});
 
 test('two 16K atlases fit desktop and mobile budgets without changing the source metadata', () => {
   const sizes = [{width:16384,height:16384},{width:16384,height:16384}];
