@@ -1,6 +1,6 @@
 # Vivian AI Companion
 
-Meet Vivian, your shy little AI companion (˶ᵔ ᵕ ᵔ˶). Chat, talk, share pictures, search the web, and make her space feel like yours with a Live2D avatar and custom backgrounds.
+Meet Vivian, a sharp-tongued tsundere AI companion with her own agenda (˶ᵔ ᵕ ᵔ˶). She chats, teases, gets jealous, remembers things, sees shared pictures, and may refuse even the easiest question simply because she feels like it.
 
 - **Live app:** [vivian-chan.vercel.app](https://vivian-chan.vercel.app)
 - **Source code:** [github.com/celestial-sora/ai-waifu](https://github.com/celestial-sora/ai-waifu)
@@ -47,12 +47,12 @@ Both accounts share the same cloud memories and companion relationship state. Ch
 
 Keep row-level security (RLS) enabled on Supabase memory tables, with no public read or write policies. The server checks account access before handling protected requests.
 
-## What Vivian can do ♡
+## What Vivian gets up to ♡
 
-- **Chat:** Starts with Groq, then tries Cerebras and Gemini if needed. She’ll do her best to keep the conversation going ✨
+- **Chat on her terms:** Groq → Cerebras → Gemini provide the language engine, but Vivian is intentionally not a general-purpose assistant. She can answer, tease, dodge, give half an answer, or refuse.
 - **Chat history:** Conversations and messages sync through Supabase across devices under the existing shared companion identity. Local copies retain unsynced messages during outages. Existing device history is imported with stable IDs to prevent duplicates. Apply `supabase/migrations/20261006005533_cloud_conversation_history.sql` before deploying this feature.
-- **Remember:** Keeps helpful long-term details and relationship/mood state. Secrets and sensitive one-off details aren’t saved automatically.
-- **Use tools:** Search the web, check Bangkok time and weather, calculate, look up memories.
+- **Remember:** Keeps durable relationship-relevant details and mood state. Secrets and sensitive one-off details aren’t saved automatically.
+- **Know things:** Search, Bangkok time/weather, calculation, and memory tools can give Vivian context. Tool results are knowledge, not an obligation to tell you the answer.
 - **See pictures:** Send an image or camera frame for Gemini to understand.
 - **Talk:** Groq Whisper handles speech input; Fish Audio makes speech output. Vivian’s avatar lip-syncs while she talks. If voice or Live2D has a bad hair day, text chat still works.
 - **Chat in your language:** Automatic, Thai, English, Japanese, Korean, and Chinese.
@@ -62,7 +62,7 @@ External app actions are currently unavailable. MCP servers have not been connec
 
 ### A little extra smarts: JEV
 
-JEV is an optional decision service. It helps Vivian decide when to search, retrieve memories, use supported tools, or change an automatic scene. Vivian's main language model still writes the conversation. JEV receives a small amount of recent chat text and feature availability, not stored memories, images, audio, or secret keys. If JEV is unavailable, chat uses its regular routing. See [JEV architecture](docs/jev-decision-layer.md).
+JEV is an optional decision service. It decides when fresh information, memory, supported tools, or an automatic scene may be relevant; it never decides that Vivian owes the user a useful answer. Vivian's main language model still writes the conversation. JEV receives a small amount of recent chat text and feature availability, not stored memories, images, audio, or secret keys. If JEV is unavailable, chat uses its regular routing. See [JEV architecture](docs/jev-decision-layer.md).
 
 ## Give Vivian a look ✨
 
