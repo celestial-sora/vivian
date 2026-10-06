@@ -41,7 +41,7 @@ Tiny but important: keep secret keys in server-side environment variables. Never
 
 Sign-in uses Google through Supabase. The app is limited to two verified accounts: `nicetry@gmail.com` and `goodluck@gmail.com`. Configure Google sign-in and the Supabase URL and publishable key before using the app. Set the Supabase Site URL to `https://vivian-chan.vercel.app` and allow the app's `/auth/callback` URL for production and local development.
 
-Both accounts share the same cloud memories and companion relationship state. Chat lists are stored in each browser. Imported Live2D models stay in that browser unless you choose to save them to private cloud storage.
+Both accounts share the same cloud memories and companion relationship state. Chat history syncs through Supabase across devices, with a browser cache for unsynced messages. Imported Live2D models stay in that browser unless you choose to save them to private cloud storage.
 
 **Menu → Settings** includes sign-out and **Reset Vivian**. Reset clears shared cloud memories, conversation history, and relationship state, along with this device's chat history and local settings. It keeps imported models and does not sign you out.
 

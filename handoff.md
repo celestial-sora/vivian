@@ -363,3 +363,9 @@ Follow up only where needed: verify live Google provider configuration and produ
 - A service-role test transaction on the live database verified create, retry without duplicate messages, append, invalid-batch atomic rollback and rejection of recreating a deleted thread. Rolled back fixture data; no real conversation content was read or changed.
 - Security advisors match the pre-migration baseline: seven informational RLS/no-policy notices for intentionally server-only tables and the existing leaked-password-protection warning. No new advisor finding. Password protection guidance: https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection
 - App code has not been deployed, committed or pushed by this task. Physical cross-device verification remains pending application deployment.
+
+
+## 2026-10-06 — Production deployment preparation
+
+- User requested production deployment after applying the history migration. Committed only Composio removal and cloud-history source/docs/tests; preserved pre-existing Companion expression-layer work and untracked `lib/expression-layers.ts` in the working tree. Production source is a clean export of committed code.
+- Merged the latest remote README changes, preserving the user's redacted account examples and updated asset credit. Corrected the remaining browser-only history description. TypeScript validation on the isolated production source and whitespace checks passed. Deployment result will be recorded after Vercel confirms READY and the production alias is verified.
