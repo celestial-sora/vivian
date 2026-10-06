@@ -434,3 +434,8 @@ Follow up only where needed: verify live Google provider configuration and produ
 
 - Recognize Safari `NotReadableError` and the reported `The I/O read operation failed.` message as unreadable model cache files. The existing hydration path now restores the authorized private cloud copy once rather than surfacing the raw read error; local-only packages retain the actionable reimport guidance.
 - Regression coverage includes named/message-only errors, asynchronous Blob read rejection, and stopping after an unreadable cloud recovery. All 29 model tests, TypeScript, changed-file ESLint and whitespace checks pass. Actual iPad Safari verification with the user's licensed model remains outstanding.
+# 2026-10-06 — ZIP import Blob fragmentation
+
+- User clarified the Safari process crash occurs during upload, while other 16K models upload successfully. Texture dimensions alone do not establish the cause.
+- ZIP extraction created a Blob for every small inflation callback. Added a bounded writer that coalesces output into 1 MiB Blob pieces, immediately releases completed-file assembly state, and preserves original bytes and MIME types. Render quality and cloud contracts are unchanged.
+- Regression feeds reused 2 KiB input buffers across a 2 MiB boundary and verifies exact output bytes with four Blob constructions instead of over a thousand. All 38 model tests, TypeScript, changed-file ESLint and whitespace checks pass. Physical iPad reproduction with the affected archive remains pending; this removes an identified import memory risk, not a confirmed root cause. Production deployment was not requested.

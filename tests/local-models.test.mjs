@@ -3,13 +3,38 @@ import { test } from 'node:test';
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { zipSync, strToU8, deflateSync } from 'fflate';
-import { bufferedBlobReader } from '../lib/blob-reader.ts';
+import { bufferedBlobReader, bufferedBlobWriter } from '../lib/blob-reader.ts';
 import { loadRenderCopies, saveRenderCopies, clearRenderCopies } from '../lib/model-render-cache.ts';
 import { inspectPackage, importModelFiles, createModelResources, normalizePath, resolveAsset, loadModelPackages, loadModelCatalog, loadModelPackage, hydrateModelPackage, modelCatalogEntry, saveModelPackage, removeModelPackage } from '../lib/local-models.ts';
 
 const manifest = () => ({ Version: 3, FileReferences: { Moc: 'avatar.moc3', Textures: ['textures/tex.png'], Physics: 'physics.json', Pose: 'pose.json', Expressions: [{ Name: 'Happy', File: 'expressions/happy.exp3.json' }, { Name: 'เศร้า #', File: 'expressions/เศร้า #.exp3.json' }], Motions: { Idle: [{ File: 'motions/idle.motion3.json' }], Wave: [{ File: 'motions/wave.motion3.json', Sound: 'hello.wav' }] } } });
 const asset = (path, content = 'test') => ({ path, blob: new Blob([content]) });
 const assets = () => [asset('pack/avatar.model3.json', JSON.stringify(manifest())), ...['avatar.moc3','textures/tex.png','physics.json','pose.json','expressions/happy.exp3.json','expressions/เศร้า #.exp3.json','motions/idle.motion3.json','motions/wave.motion3.json','hello.wav','preview.png'].map((path) => asset(`pack/${path}`))];
+
+test('ZIP output batches tiny bursts into bounded Blobs and preserves reused input', async () => {
+  const NativeBlob = globalThis.Blob;
+  let objects = 0;
+  globalThis.Blob = class extends NativeBlob {
+    constructor(parts, options) { super(parts, options); objects++; }
+  };
+  let result;
+  const bytes = Uint8Array.from({ length: 2 * 1024 * 1024 + 13 }, (_, index) => index % 251);
+  try {
+    const writer = bufferedBlobWriter('application/octet-stream');
+    const burst = new Uint8Array(2048);
+    for (let offset = 0; offset < bytes.length; offset += burst.length) {
+      const length = Math.min(burst.length, bytes.length - offset);
+      burst.set(bytes.subarray(offset, offset + length));
+      writer.push(burst.subarray(0, length));
+      burst.fill(0);
+    }
+    result = writer.finish();
+    assert.equal(objects, 4); // Three bounded pieces plus the completed file.
+    assert.equal(result.type, 'application/octet-stream');
+    assert.equal(bufferedBlobWriter('image/png').finish().size, 0);
+  } finally { globalThis.Blob = NativeBlob; }
+  assert.deepEqual(new Uint8Array(await result.arrayBuffer()), bytes);
+});
 
 test('small inflation bursts use bounded batched Blob reads across block boundaries', async () => {
   const bytes = Uint8Array.from({ length: 700_001 }, (_, index) => index % 251);

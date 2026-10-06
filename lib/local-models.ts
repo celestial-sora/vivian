@@ -1,6 +1,6 @@
 /** Validated Cubism packages; originals stay in IndexedDB and may sync to private R2. */
 import type { TextureBudget, TexturePlan } from "./model-textures";
-import { bufferedBlobReader } from "./blob-reader.ts";
+import { bufferedBlobReader, bufferedBlobWriter } from "./blob-reader.ts";
 export interface ModelAsset { path: string; blob: Blob }
 export interface ModelMotion { group: string; index: number; name: string }
 export interface LocalModel {
@@ -150,15 +150,15 @@ export async function importModelFiles(files: File[]): Promise<ModelPackage> {
       if (file.name.endsWith("/") || file.name.startsWith("__MACOSX/")) { file.ondata = () => {}; file.start(); return; }
       declaredBytes += file.originalSize ?? 0; count++; pending++;
       if (declaredBytes > MAX_BYTES || count > MAX_FILES) throw new Error("Expanded ZIP exceeds 512 MB or 3,000 files.");
-      const chunks: Blob[] = [];
+      const writer = bufferedBlobWriter(mime(file.name));
       file.ondata = (error, data, final) => {
         if (error) throw error;
         bytes += data.byteLength;
         if (bytes > MAX_BYTES) throw new Error("Expanded ZIP exceeds 512 MB or 3,000 files.");
-        chunks.push(new Blob([new Uint8Array(data)]));
+        writer.push(data);
         if (final) {
-          assets.push({ path: file.name, blob: new Blob(chunks, { type: mime(file.name) }) });
-          chunks.length = 0; pending--;
+          assets.push({ path: file.name, blob: writer.finish() });
+          pending--;
         }
       };
       file.start();
