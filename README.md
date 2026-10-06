@@ -40,7 +40,7 @@ Tiny but important: keep secret keys in server-side environment variables. Never
 
 ## Sign-in & privacy 🔒
 
-Sign-in uses Google through Supabase. The app is limited to two verified accounts: `suphloeksangko@gmail.com` and `duckchan690@gmail.com`. Configure Google sign-in and the Supabase URL and publishable key before using the app. Set the Supabase Site URL to `https://vivian-chan.vercel.app` and allow the app's `/auth/callback` URL for production and local development.
+Sign-in uses Google through Supabase. The app is limited to two verified accounts: `nicetry@gmail.com` and `goodluck@gmail.com`. Configure Google sign-in and the Supabase URL and publishable key before using the app. Set the Supabase Site URL to `https://vivian-chan.vercel.app` and allow the app's `/auth/callback` URL for production and local development.
 
 Both accounts share the same cloud memories and companion relationship state. Chat lists are stored in each browser. Imported Live2D models stay in that browser unless you choose to save them to private cloud storage.
 
@@ -120,4 +120,4 @@ Run feature tests with scripts such as `npm run test:auth`, `npm run test:jev`, 
 
 ## License and assets
 
-This repository contains Vivian's application code. Models and other assets may have separate license terms. Live2D credit: **Cai Cat**. Make sure a model's license allows your intended use and private cloud storage.
+This repository contains Vivian's application code. Models and other assets may have separate license terms. Live2D credit: **sorachan**. Make sure a model's license allows your intended use and private cloud storage.
