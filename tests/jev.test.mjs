@@ -97,9 +97,9 @@ test("ambiguous decisions use conservative defaults and produce no response guid
 
 test("response guidance is static, confidence-gated, and preserves Vivian's personality", () => {
   const supportive = plan(context("I need reassurance"), { supportive_response: 0.99 });
-  assert.match(supportive.responseHint, /stay fully Vivian.*not counselor, customer service, or problem-solver/);
+  assert.match(supportive.responseHint, /vulnerable turn.*quieter, gentler.*tsundere voice/);
   const explanatory = plan(context("Explain it"), { explanatory_response: 0.95 });
-  assert.match(explanatory.responseHint, /Do not force an explanation or a useful answer/);
+  assert.match(explanatory.responseHint, /Treat the explanation request as another conversational move/);
   const decision = jev.parseJevDecision(answers({ needs_weather: 0.97 }));
   assert.equal(decision.intent.type, "task");
   assert.equal(decision.intent.confidence, 0.97);
@@ -320,7 +320,7 @@ test("chat skips irrelevant durable memory, executes approved local tools and ad
   assert.deepEqual(body.tools, ["calculator"]);
   assert.equal(fixture.memoryLoads.length, 0);
   const prompt = fixture.calls.find((call) => call.kind === "groq").body.messages[0].content;
-  assert.match(prompt, /= 4/); assert.match(prompt, /Do not force an explanation or a useful answer/); assert.match(prompt, /ฉันจะไม่บอกเธอหรอก/); assert.doesNotMatch(prompt, /ตอบเนื้อหาให้ครบตามที่ขอ|Explain the answer clearly/);
+  assert.match(prompt, /= 4/); assert.match(prompt, /Treat the explanation request as another conversational move/); assert.match(prompt, /ฉันจะไม่บอกเธอหรอก/); assert.doesNotMatch(prompt, /ตอบเนื้อหาให้ครบตามที่ขอ|Explain the answer clearly/);
 });
 
 test("chat executes a semantic time decision even without an existing time regex match", async () => {
