@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { captureModelRestState, restoreModelRestState, type ModelRestState, type CubismRestModel } from "@/lib/model-rest-state";
 import { attachModelWind, type WindInternalModel } from "@/lib/model-wind";
+import { waitForCubismCore } from "@/lib/model-runtime";
 import { useConversationHistory } from "@/lib/use-conversation-history";
 import { historyMessage, HISTORY_CACHE_KEY, type HistoryMessage, type HistoryConversation } from "@/lib/chat-history";
 import { authFetch } from "@/lib/auth/fetch";
@@ -158,6 +159,8 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   const [cloudLibrary, setCloudLibrary] = useState<CloudLibrary | null>(null);
   const [modelPreview, setModelPreview] = useState<string | null>(null);
   const [textureQuality, setTextureQuality] = useState<"auto" | "original">("auto");
+  const [modelReload, setModelReload] = useState(0);
+  const [graphicsLost, setGraphicsLost] = useState(false);
   const [textureSummary, setTextureSummary] = useState<string | null>(null);
   const [activeExpression, setActiveExpression] = useState<string | null>(null);
   const [activeMotion, setActiveMotion] = useState<string | null>(null);
@@ -484,7 +487,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   }, []);
 
   useEffect(() => {
-    if (!preferencesReady || !modelsReady) return;
+    if (!preferencesReady || !modelsReady || graphicsLost) return;
     setActiveExpression(null);
     setActiveMotion(null);
     if (!activeModel || !activePackage) { setModelStatus("empty"); return; }
@@ -499,10 +502,12 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     let resizeFrame: number | undefined;
     let resizeTimeout: number | undefined;
     let disposed = false;
+    let ownedModel: any;
     const loadId = ++modelLoadIdRef.current;
     void (async () => {
       try {
         const PIXI = await import("pixi.js");
+        await waitForCubismCore(textureAbort.signal);
         const { Live2DModel, Cubism4ModelSettings } = await import("pixi-live2d-display/cubism4");
         if (!canvasRef.current || disposed) return;
         const isAppleMobile = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -536,8 +541,10 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         canvasRef.current.dataset.gpuTextureLimit = String(maxTextureSize);
         const mobileDevice = isAppleMobile || /Android|Mobile/i.test(navigator.userAgent);
         const resources = await createModelResources(activePackage, activeModel, {
-          maxDimension: maxTextureSize,
-          budgetBytes: (mobileDevice ? 128 : 512) * 1024 * 1024,
+          // GPU limits alone do not account for framebuffers, decoded images,
+          // Cubism masks and the rest of the page. Leave room for those too.
+          maxDimension: textureQuality === "original" ? maxTextureSize : Math.min(maxTextureSize, mobileDevice ? 4096 : 8192),
+          budgetBytes: (mobileDevice ? 64 : 256) * 1024 * 1024,
           original: textureQuality === "original",
           signal: textureAbort.signal,
         });
@@ -555,7 +562,12 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
           const stopWind = attachModelWind(canvasRef.current, model.internalModel as unknown as WindInternalModel);
           model.once("destroy", stopWind);
         }
-        for (const texture of model.textures) texture.baseTexture.mipmap = PIXI.MIPMAP_MODES.OFF;
+        ownedModel = model;
+        for (const texture of model.textures) {
+          if (!texture.valid) throw new Error("A model texture did not finish loading. Please reload the model.");
+          texture.baseTexture.mipmap = PIXI.MIPMAP_MODES.OFF;
+          texture.baseTexture.wrapMode = PIXI.WRAP_MODES.CLAMP;
+        }
         modelRestStateRef.current = captureModelRestState(model.internalModel.coreModel as CubismRestModel);
         modelRef.current = model;
         if (resources.texturePlan.some((plan) => plan.source.width !== plan.render.width || plan.source.height !== plan.render.height)) {
@@ -563,7 +575,6 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
           const render = Math.max(...resources.texturePlan.flatMap((plan) => [plan.render.width, plan.render.height]));
           setTextureSummary(`${render.toLocaleString()}px rendering · ${source.toLocaleString()}px original`);
         }
-        setModelStatus("ready");
         const bounds = model.getLocalBounds();
         resizeModel = () => {
           const stage = canvasRef.current?.parentElement?.getBoundingClientRect();
@@ -594,6 +605,9 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         queueResize();
         // If the artist did not supply a thumbnail, capture the rendered model.
         resizeModel();
+        app.renderer.render(app.stage);
+        if (app.renderer.gl.isContextLost()) throw new Error("Graphics memory is unavailable. Try Auto texture quality and reload the model.");
+        setModelStatus("ready");
         if (!activeModel.previewPath) {
           try {
             app.renderer.render(app.stage);
@@ -618,6 +632,12 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         window.addEventListener("orientationchange", handleOrientationChange);
         window.visualViewport?.addEventListener("resize", queueResize);
       } catch (error) {
+        if (ownedModel) {
+          app?.stage.removeChild(ownedModel);
+          ownedModel.destroy({ children: true, texture: true, baseTexture: true });
+          if (modelRef.current === ownedModel) { modelRef.current = null; modelRestStateRef.current = null; }
+          ownedModel = undefined;
+        }
         if (!disposed) {
           console.error("Live2D failed to load", error);
           setModelStatus("error");
@@ -635,19 +655,47 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       window.removeEventListener("resize", queueResize);
       window.removeEventListener("orientationchange", handleOrientationChange);
       window.visualViewport?.removeEventListener("resize", queueResize);
-      const currentModel = modelRef.current;
+      const currentModel = ownedModel;
       if (currentModel && app) {
         app.stage.removeChild(currentModel);
         currentModel.destroy({ children: true, texture: true, baseTexture: true });
       }
-      modelRef.current = null;
-      modelRestStateRef.current = null;
+      ownedModel = undefined;
+      if (modelRef.current === currentModel) {
+        modelRef.current = null;
+        modelRestStateRef.current = null;
+      }
       releaseResources?.();
     };
-  }, [preferencesReady, modelsReady, activeModel, activePackage, textureQuality]);
+  }, [preferencesReady, modelsReady, activeModel, activePackage, textureQuality, modelReload, graphicsLost]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const lost = (event: Event) => {
+      event.preventDefault(); // Allow the browser to restore this context.
+      pixiAppRef.current?.stop();
+      setGraphicsLost(true);
+      setModelStatus("error");
+      setModelNotice("Graphics interrupted. The model will reload when graphics recover.");
+    };
+    const restored = () => {
+      pixiAppRef.current?.start();
+      setGraphicsLost(false);
+      setModelNotice(null);
+      setModelReload((value) => value + 1);
+    };
+    canvas.addEventListener("webglcontextlost", lost);
+    canvas.addEventListener("webglcontextrestored", restored);
+    return () => {
+      canvas.removeEventListener("webglcontextlost", lost);
+      canvas.removeEventListener("webglcontextrestored", restored);
+    };
+  }, []);
 
   useEffect(() => () => {
-    pixiAppRef.current?.destroy(true, { children: true });
+    // React owns this canvas; removing it breaks effect replay/remounting.
+    pixiAppRef.current?.destroy(false, { children: true });
     pixiAppRef.current = null;
   }, []);
 
@@ -1600,6 +1648,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
                 </div>
                 {modelPackages.length > 0 && <label className="model-select-label">Model<select value={activeModelId ?? ""} disabled={modelImporting} onChange={(event) => { void chooseModel(event.target.value); }}>{modelPackages.flatMap((pack) => pack.models.map((model) => <option key={model.id} value={model.id}>{model.name}{cloudLibrary?.models.some((entry) => entry.id === pack.id) ? " · Cloud" : " · This device"}</option>))}</select></label>}
                 {activeModel && <label className="model-select-label">Texture quality<select value={textureQuality} onChange={(event) => { setModelNotice(null); setTextureQuality(event.target.value as "auto" | "original"); }}><option value="auto">Auto · fit this device</option><option value="original">Original textures</option></select></label>}
+                {activeModel && <button type="button" className="floating-option" disabled={modelStatus === "loading" || graphicsLost} onClick={() => { setModelNotice(null); setModelReload((value) => value + 1); }}>Reload model</button>}
                 {textureSummary && <p className="floating-note">{textureSummary}. Original files stay unchanged.</p>}
                 <div className="model-import-actions">
                   <button className="floating-option model-import-primary" type="button" disabled={modelImporting || !modelsReady} onClick={() => modelZipRef.current?.click()}><Icon name="plus" size={16} />{modelImporting ? "Importing…" : "Import model ZIP"}</button>

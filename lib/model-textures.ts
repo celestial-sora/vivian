@@ -9,6 +9,7 @@ export function planTextures(sizes: TextureSize[], budget: TextureBudget): Textu
   const max = Math.max(1, ...sizes.flatMap((size) => [size.width, size.height]));
   if (budget.original && max > budget.maxDimension) throw new Error(`Original textures exceed this device's ${budget.maxDimension}px limit. Choose Auto quality.`);
   const bytes = sizes.reduce((total, size) => total + size.width * size.height * 4, 0);
+  if (budget.original && bytes > budget.budgetBytes) throw new Error("Original textures exceed this device's graphics memory budget. Choose Auto quality.");
   const scale = budget.original ? 1 : Math.min(1, budget.maxDimension / max, Math.sqrt(budget.budgetBytes / Math.max(4, bytes)));
   return sizes.map((source) => ({ source, render: { width: Math.max(1, Math.floor(source.width * scale)), height: Math.max(1, Math.floor(source.height * scale)) } }));
 }
