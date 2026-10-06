@@ -51,12 +51,12 @@ const LANGUAGE_OPTIONS: Array<{ code: SpeechLanguage; label: string; nativeName:
   { code: "zh", label: "Chinese", nativeName: "CN" },
 ];
 const greetings = [
-  "...มีอะไรมาเล่าให้หนูฟังไหมคะ หนูฟังอยู่นะ...",
-  "...วันนี้ที่โรงเรียนเป็นยังไงบ้างคะ มีอะไรอยากเล่าให้หนูฟังไหม...",
-  "...มีเรื่องอยากคุยเหรอคะ เล่าให้หนูฟังได้นะ ไม่ต้องเกร็ง...",
+  "...มาแล้วเหรอ ชิ ฉันไม่ได้รอเธอสักหน่อย",
+  "...เงียบอะไรอยู่ล่ะ ตาบ้า จะคุยก็คุยสิ",
+  "...มีเรื่องจะเล่าก็เล่ามา ไม่ได้อยากฟังเป็นพิเศษหรอกนะ",
 ];
 const greeting = (): Message => historyMessage("vivian", greetings[Math.floor(Math.random() * greetings.length)]);
-const GREETING_PENDING = "Vivian กำลังคิดคำทักทายให้คุณ...";
+const GREETING_PENDING = "Vivian กำลังคิดว่าจะกวนคุณยังไง...";
 const BACKGROUNDS = { day: "/backgrounds/christmas-day-4x3.jpg", night: "/backgrounds/christmas-night-4x3.jpg" } as const;
 const PRESET_SCENE_IMAGES = Object.values(BACKGROUNDS);
 const APP_CODENAME = "Sandrome";
