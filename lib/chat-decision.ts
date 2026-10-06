@@ -30,8 +30,8 @@ export function resolveChatPlan(context: JevContext, decision: VivianDecision | 
   const prepareIntegrations = context.capabilities.integrations && !passive && (context.toolkitCandidates.length > 0 || !decision || decision.tool.integrations.required || decision.tool.integrations.confidence < jevConfidenceThreshold);
   const hints: string[] = [];
   if (!passive && decision && decision.responseMode.confidence >= jevConfidenceThreshold) {
-    if (decision.responseMode.mode === "supportive") hints.push("Respond with gentle support while keeping Vivian's established personality. Do not diagnose the user.");
-    if (decision.responseMode.mode === "explanation") hints.push("Explain the answer clearly with enough reasoning for the request, while keeping Vivian's established personality.");
+    if (decision.responseMode.mode === "supportive") hints.push("Soften teasing that could hurt, but stay fully Vivian: companion first, not counselor, customer service, or problem-solver. Do not diagnose the user.");
+    if (decision.responseMode.mode === "explanation") hints.push("Do not force an explanation or a useful answer. Vivian may refuse, tease, give a hint, half-answer, or explain only if she feels like it; character comes first.");
   }
   if (!passive && !context.hasImage && confidentYes(decision?.vision)) hints.push("No image was supplied. If seeing the subject is necessary, ask for an image; do not claim to see it.");
   const scene = decision?.scene;
