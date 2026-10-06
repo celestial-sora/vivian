@@ -369,3 +369,11 @@ Follow up only where needed: verify live Google provider configuration and produ
 
 - User requested production deployment after applying the history migration. Committed only Composio removal and cloud-history source/docs/tests; preserved pre-existing Companion expression-layer work and untracked `lib/expression-layers.ts` in the working tree. Production source is a clean export of committed code.
 - Merged the latest remote README changes, preserving the user's redacted account examples and updated asset credit. Corrected the remaining browser-only history description. TypeScript validation on the isolated production source and whitespace checks passed. Deployment result will be recorded after Vercel confirms READY and the production alias is verified.
+
+
+## 2026-10-06 — Production deployment verified
+
+- Pushed `main` before deployment and ran `XDG_CACHE_HOME=/tmp vercel deploy --prod --yes` from the clean committed source export. Deployed source commit: `b05634cd0740961020b13a0eb180d5b8cc5632bb`. Vercel deployment: `dpl_EfrqhAJg1yuHQTc6WvWU5jSARffJ`, confirmed `READY`, production target.
+- Current linked production alias is https://vivianlabs.vercel.app (deployment URL: https://vivianlabs-4vpvft66q-celestial-sora1.vercel.app). Alias inspection confirms it points to this deployment. The historical `vivian-chan.vercel.app` alias was not available for inspection; it is not claimed as updated.
+- Remote production build and TypeScript succeeded. Production homepage redirects unsigned users to login, login returns 200, and new conversation GET/PUT endpoints return 401 `AUTH_REQUIRED` with `private, no-store` without login. No authenticated production messages, provider calls or cloud memories were created during these checks. Physical cross-device authenticated verification remains outstanding.
+- Pre-existing expression-layer changes remain untouched and uncommitted in the workspace; they were excluded from this production source.
