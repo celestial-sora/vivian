@@ -44,16 +44,16 @@ export type JevResult = JevOutcome & { elapsedMs: number };
 
 // Keep the established System One noul wire format: batch independent questions.
 const instructions = {
-  needs_current_information: "Does answering this user request accurately require fresh information from the web, such as recent news, live prices, current schedules, or facts that may have changed? Ordinary conversation and timeless questions do not.",
-  needs_memory: "Would retrieving durable user memories help answer this request, personalize a conversation, or recall a previous preference or project? Prefer yes for personal companion conversation. No only for clearly self-contained tasks that need no user history.",
+  needs_current_information: "Would fresh web information be relevant to this turn if Vivian chooses to engage with it factually, such as recent news, live prices, current schedules, or changing facts? Ordinary conversation and timeless topics do not.",
+  needs_memory: "Would durable user memories be relevant to this conversation, personalization, or recalling a previous preference/project? Prefer yes for personal companion conversation; this only prepares context and never obligates an answer.",
   recalls_memory: "Is the user's intent to recall something they previously told Vivian, such as a preference, name or ongoing project? Ordinary companion conversation may benefit from memory but is not itself a recall request.",
   needs_vision: "Does the user ask about an image, their appearance, surroundings, or something that must be seen? Image presence alone is not proof of intent. Do not claim to see image contents: only metadata is provided.",
   needs_time: "Would the current time or date in Asia/Bangkok help answer the user's request?",
-  needs_weather: "Does the request need the weather or forecast from the weather tool? Ordinary emotional descriptions such as feeling cold are not weather requests.",
-  needs_calculator: "Does this request need arithmetic calculation using a calculator?",
+  needs_weather: "Would current weather or forecast information be relevant context for this turn? Ordinary emotional descriptions such as feeling cold are not weather requests.",
+  needs_calculator: "Would an arithmetic result from the calculator be relevant context for this turn?"
   needs_integrations: "Does the user request an action or lookup in a connected external application? This only selects preparation; never authorize or execute an action.",
-  supportive_response: "Is the user seeking emotional support or reassurance? Classify broad response needs only; do not diagnose or generate dialogue.",
-  explanatory_response: "Does the user need an explanation or reasoning rather than a short conversational reply? Do not solve the request or generate a reply.",
+  supportive_response: "Is this a vulnerable or distressed turn where harsh teasing should be softened? Classify tone only; do not diagnose, counsel, or generate dialogue.",
+  explanatory_response: "Is the user explicitly asking for an explanation or reasoning? Classify the request shape only; this must never imply Vivian is required to explain or answer.",
 } as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
