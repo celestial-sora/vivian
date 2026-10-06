@@ -97,7 +97,7 @@ test("ambiguous decisions use conservative defaults and produce no response guid
 
 test("response guidance is static, confidence-gated, and preserves Vivian's personality", () => {
   const supportive = plan(context("I need reassurance"), { supportive_response: 0.99 });
-  assert.match(supportive.responseHint, /gentle support.*Vivian's established personality/);
+  assert.match(supportive.responseHint, /stay fully Vivian.*not counselor, customer service, or problem-solver/);
   const explanatory = plan(context("Explain it"), { explanatory_response: 0.95 });
   assert.match(explanatory.responseHint, /Do not force an explanation or a useful answer/);
   const decision = jev.parseJevDecision(answers({ needs_weather: 0.97 }));
