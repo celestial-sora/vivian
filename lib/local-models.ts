@@ -142,6 +142,8 @@ export async function importModelFiles(files: File[]): Promise<ModelPackage> {
   if (files.length === 1 && /\.zip$/i.test(files[0].name)) {
     if (files[0].size > MAX_BYTES) throw new Error("ZIP exceeds 512 MB.");
     const { Unzip, UnzipInflate } = await import("fflate");
+    const { zipPathMaps } = await import("./zip-paths.ts");
+    const pathMaps = await zipPathMaps(files[0]);
     assets = [];
     let bytes = 0, declaredBytes = 0, count = 0, pending = 0;
     const unzip = new Unzip((file) => {
@@ -170,6 +172,14 @@ export async function importModelFiles(files: File[]): Promise<ModelPackage> {
       if (offset % (256 * 1024) === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
     if (pending) throw new Error("Model ZIP is incomplete.");
+    let pathError: unknown;
+    for (const paths of pathMaps) {
+      try {
+        // Decode only ZIP entry metadata. Manifest references stay untouched.
+        return await inspectPackage(assets.map((asset) => ({ ...asset, path: paths.get(asset.path) ?? asset.path })));
+      } catch (error) { pathError ??= error; }
+    }
+    throw pathError;
   } else assets = files.map((file) => ({ path: file.webkitRelativePath || file.name, blob: file }));
   return inspectPackage(assets);
 }

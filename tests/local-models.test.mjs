@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
-import { zipSync, strToU8 } from 'fflate';
+import { zipSync, strToU8, deflateSync } from 'fflate';
 import { bufferedBlobReader } from '../lib/blob-reader.ts';
 import { loadRenderCopies, saveRenderCopies, clearRenderCopies } from '../lib/model-render-cache.ts';
 import { inspectPackage, importModelFiles, createModelResources, normalizePath, resolveAsset, loadModelPackages, loadModelCatalog, loadModelPackage, hydrateModelPackage, modelCatalogEntry, saveModelPackage, removeModelPackage } from '../lib/local-models.ts';
@@ -74,6 +74,109 @@ test('ZIP extraction and folder input preserve paths and multiple outfits', asyn
   assert.equal(pack.models.length, 2);
   const folder = files.map((asset) => { const file = new File([asset.blob], asset.path.split('/').at(-1)); Object.defineProperty(file, 'webkitRelativePath', { value: asset.path }); return file; });
   assert.deepEqual((await importModelFiles(folder)).models.map((model) => model.name), ['avatar', 'alternate']);
+});
+
+function zipCrc(bytes) {
+  let crc = -1;
+  for (const byte of bytes) { crc ^= byte; for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0); }
+  return (crc ^ -1) >>> 0;
+}
+function filenameZip(entries, encode, { tagged = false, unicode = false, badUnicodeCrc = false, compressed = false } = {}) {
+  const locals = [], directory = []; let offset = 0;
+  for (const [path, text] of entries) {
+    const name = encode(path), data = new TextEncoder().encode(text);
+    const payload = compressed ? deflateSync(data) : data;
+    const extra = unicode ? new Uint8Array(9 + new TextEncoder().encode(path).length) : new Uint8Array();
+    if (unicode) {
+      const view = new DataView(extra.buffer); view.setUint16(0, 0x7075, true); view.setUint16(2, extra.length - 4, true);
+      extra[4] = 1; view.setUint32(5, zipCrc(name) ^ (badUnicodeCrc ? 1 : 0), true); extra.set(new TextEncoder().encode(path), 9);
+    }
+    const local = new Uint8Array(30 + name.length + payload.length); const lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true); lv.setUint16(4, 20, true); lv.setUint16(6, tagged ? 2048 : 0, true);
+    lv.setUint16(8, compressed ? 8 : 0, true);
+    lv.setUint32(14, zipCrc(data), true); lv.setUint32(18, payload.length, true); lv.setUint32(22, data.length, true); lv.setUint16(26, name.length, true);
+    local.set(name, 30); local.set(payload, 30 + name.length);
+    const central = new Uint8Array(46 + name.length + extra.length); const cv = new DataView(central.buffer);
+    cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true); cv.setUint16(8, tagged ? 2048 : 0, true);
+    cv.setUint16(10, compressed ? 8 : 0, true);
+    cv.setUint32(16, zipCrc(data), true); cv.setUint32(20, payload.length, true); cv.setUint32(24, data.length, true);
+    cv.setUint16(28, name.length, true); cv.setUint16(30, extra.length, true); cv.setUint32(42, offset, true);
+    central.set(name, 46); central.set(extra, 46 + name.length);
+    locals.push(local); directory.push(central); offset += local.length;
+  }
+  const end = new Uint8Array(22); const view = new DataView(end.buffer);
+  view.setUint32(0, 0x06054b50, true); view.setUint16(8, entries.length, true); view.setUint16(10, entries.length, true);
+  view.setUint32(12, directory.reduce((size, entry) => size + entry.length, 0), true); view.setUint32(16, offset, true);
+  return new File([...locals, ...directory, end], 'unicode-model.zip');
+}
+const chineseZipEntries = () => {
+  const name = '八千代辉夜姬', folder = '雪熊企划';
+  return [
+    [`${folder}/${name}.model3.json`, JSON.stringify({ Version: 3, FileReferences: { Moc: `${name}.moc3`, Textures: [`${name}.8192/texture_00.png`, `${name}.8192/texture_01.png`] } })],
+    [`${folder}/${name}.moc3`, 'moc'],
+    [`${folder}/${name}.8192/texture_00.png`, 'texture0'],
+    [`${folder}/${name}.8192/texture_01.png`, 'texture1'],
+  ];
+};
+
+test('Chinese ZIP paths preserve exact manifest references with tagged and untagged UTF-8', async () => {
+  const entries = chineseZipEntries();
+  for (const [tagged, compressed] of [[true, false], [false, false], [true, true], [false, true]]) {
+    const pack = await importModelFiles([filenameZip(entries, (path) => new TextEncoder().encode(path), { tagged, compressed })]);
+    assert.deepEqual(pack.assets.map((asset) => asset.path), entries.map(([path]) => path));
+    assert.equal(pack.models[0].name, '八千代辉夜姬');
+    const resources = await createModelResources(pack, pack.models[0]);
+    assert.equal(await (await fetch(resources.resolve('八千代辉夜姬.moc3'))).text(), 'moc');
+    resources.dispose();
+  }
+});
+
+test('Windows GBK Chinese ZIP filenames match UTF-8 JSON references', async () => {
+  const encode = (path) => {
+    const bytes = [];
+    const values = new Map([... '雪熊企划八千代辉夜姬'].map((character, index) => [character, Buffer.from('d1a9d0dcc6f3bbaeb0cbc7a7b4fabbd4d2b9bca7', 'hex').subarray(index * 2, index * 2 + 2)]));
+    for (const character of path) bytes.push(...(values.get(character) ?? new TextEncoder().encode(character)));
+    return new Uint8Array(bytes);
+  };
+  const entries = chineseZipEntries();
+  const pack = await importModelFiles([filenameZip(entries, encode, { compressed: true })]);
+  assert.deepEqual(pack.assets.map((asset) => asset.path), entries.map(([path]) => path));
+});
+
+test('DOS CP437 paths use exact manifest references to disambiguate legacy decoding', async () => {
+  const entries = [
+    ['éé/avatar.model3.json', JSON.stringify({ Version: 3, FileReferences: { Moc: 'éé.moc3', Textures: ['texture.png'] } })],
+    ['éé/éé.moc3', 'moc'], ['éé/texture.png', 'texture'],
+  ];
+  const encode = (path) => Uint8Array.from(path, (character) => character === 'é' ? 0x82 : character.charCodeAt(0));
+  const pack = await importModelFiles([filenameZip(entries, encode)]);
+  assert.deepEqual(pack.assets.map((asset) => asset.path), entries.map(([path]) => path));
+});
+
+test('ZIP64 central metadata preserves untagged Chinese UTF-8 paths', async () => {
+  const entries = chineseZipEntries();
+  const original = new Uint8Array(await filenameZip(entries, (path) => new TextEncoder().encode(path)).arrayBuffer());
+  const eocd = original.slice(-22), view = new DataView(eocd.buffer);
+  const zip64 = new Uint8Array(56), zv = new DataView(zip64.buffer);
+  zv.setUint32(0, 0x06064b50, true); zv.setBigUint64(4, 44n, true);
+  zv.setUint16(12, 45, true); zv.setUint16(14, 45, true);
+  zv.setBigUint64(24, BigInt(entries.length), true); zv.setBigUint64(32, BigInt(entries.length), true);
+  zv.setBigUint64(40, BigInt(view.getUint32(12, true)), true); zv.setBigUint64(48, BigInt(view.getUint32(16, true)), true);
+  const locator = new Uint8Array(20), lv = new DataView(locator.buffer);
+  lv.setUint32(0, 0x07064b50, true); lv.setBigUint64(8, BigInt(original.length - 22), true); lv.setUint32(16, 1, true);
+  view.setUint16(8, 65535, true); view.setUint16(10, 65535, true); view.setUint32(12, 0xffffffff, true); view.setUint32(16, 0xffffffff, true);
+  const pack = await importModelFiles([new File([original.subarray(0, -22), zip64, locator, eocd], 'zip64.zip')]);
+  assert.deepEqual(pack.assets.map((asset) => asset.path), entries.map(([path]) => path));
+});
+
+test('valid Unicode Path metadata overrides legacy names and invalid CRC is ignored', async () => {
+  const entries = chineseZipEntries();
+  const encode = (path) => new TextEncoder().encode(path.replace('雪熊企划', 'legacy-folder').replaceAll('八千代辉夜姬', 'legacy-name'));
+  const pack = await importModelFiles([filenameZip(entries, encode, { unicode: true })]);
+  assert.deepEqual(pack.assets.map((asset) => asset.path), entries.map(([path]) => path));
+  await assert.rejects(importModelFiles([filenameZip(entries, encode, { unicode: true, badUnicodeCrc: true })]), /Missing asset/);
+  const unsafe = entries.map(([path, text]) => [`../${path}`, text]);
+  await assert.rejects(importModelFiles([filenameZip(unsafe, encode, { unicode: true })]), /leaves the model package/);
 });
 test('missing resources, external URLs, invalid manifests, duplicate paths, and empty inputs are rejected', async () => {
   await assert.rejects(inspectPackage(assets().filter((file) => !file.path.endsWith('hello.wav'))), /Missing asset/);
