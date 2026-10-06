@@ -1,5 +1,6 @@
 /** Validated Cubism packages; originals stay in IndexedDB and may sync to private R2. */
 import type { TextureBudget, TexturePlan } from "./model-textures";
+import { bufferedBlobReader } from "./blob-reader.ts";
 export interface ModelAsset { path: string; blob: Blob }
 export interface ModelMotion { group: string; index: number; name: string }
 export interface LocalModel {
@@ -163,8 +164,9 @@ export async function importModelFiles(files: File[]): Promise<ModelPackage> {
     unzip.register(UnzipInflate);
     // Read bounded compressed blocks and convert output into Blob pieces;
     // never hold both full ZIP and full expanded typed-array maps in memory.
+    const read = bufferedBlobReader(files[0]);
     for (let offset = 0; offset < files[0].size; offset += 2048) {
-      unzip.push(new Uint8Array(await files[0].slice(offset, offset + 2048).arrayBuffer()), offset + 2048 >= files[0].size);
+      unzip.push(await read(offset, 2048), offset + 2048 >= files[0].size);
       if (offset % (256 * 1024) === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
     if (pending) throw new Error("Model ZIP is incomplete.");
@@ -179,7 +181,8 @@ export async function createModelResources(pack: ModelPackage, model: LocalModel
   const renderCopies = new Map<string, Blob>();
   let texturePlan: TexturePlan[] = [];
   if (budget) {
-    const { readTextureSize, planTextures, resizeTexture } = await import("./model-textures");
+    const { readTextureSize, planTextures, resizeTexture } = await import("./model-textures.ts");
+    const { loadRenderCopies, saveRenderCopies } = await import("./model-render-cache.ts");
     const textures = manifest.FileReferences.Textures.map((ref) => {
       const path = resolveAsset(model.manifestPath, ref);
       const file = pack.assets.find((item) => item.path === path);
@@ -189,13 +192,18 @@ export async function createModelResources(pack: ModelPackage, model: LocalModel
     const sizes = [];
     for (const texture of textures) { budget.signal?.throwIfAborted(); sizes.push(await readTextureSize(texture.blob)); }
     texturePlan = planTextures(sizes, budget);
+    const cacheKey = JSON.stringify(["area-v1", pack.id, textures.map((texture, index) => [texture.path, texture.blob.size, texturePlan[index]])]);
+    const cached = texturePlan.some((plan) => plan.source.width !== plan.render.width || plan.source.height !== plan.render.height)
+      ? await loadRenderCopies(cacheKey) : undefined;
     for (let index = 0; index < textures.length; index++) {
       budget.signal?.throwIfAborted();
       const plan = texturePlan[index];
       if (plan.source.width !== plan.render.width || plan.source.height !== plan.render.height) {
-        renderCopies.set(textures[index].path, await resizeTexture(textures[index].blob, plan.render, budget.signal));
+        renderCopies.set(textures[index].path, cached?.get(textures[index].path) ?? await resizeTexture(textures[index].blob, plan.render, budget.signal));
       }
     }
+    budget.signal?.throwIfAborted();
+    if (!cached) await saveRenderCopies(cacheKey, renderCopies);
     budget.signal?.throwIfAborted();
   }
   const urls = new Map<string, string>();
@@ -304,7 +312,11 @@ export const saveModelPackage = (pack: ModelPackage): Promise<IDBValidKey> => {
     return store.put(pack);
   });
 };
-export const removeModelPackage = (id: string): Promise<undefined> => storage("readwrite", (store) => {
-  store.transaction.objectStore("catalog").delete(id);
-  return store.delete(id);
-});
+export const removeModelPackage = async (id: string): Promise<undefined> => {
+  const { clearRenderCopies } = await import("./model-render-cache.ts");
+  await clearRenderCopies();
+  return storage("readwrite", (store) => {
+    store.transaction.objectStore("catalog").delete(id);
+    return store.delete(id);
+  });
+};

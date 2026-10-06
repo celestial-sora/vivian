@@ -297,8 +297,13 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   async function importModels(files: File[]) {
     if (modelImporting || !files.length) return;
     setModelImporting(true);
+    const wasPaused = modelPaused;
+    setModelPaused(true);
     setModelNotice(null);
     try {
+      // Let the render effect release the old model and GPU textures before
+      // expanding another package. Keep rendering paused through cloud sync.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       const pack = await importModelFiles(files);
       await saveModelPackage(pack);
       setModelPackages((current) => [...current.map(modelCatalogEntry), pack]);
@@ -307,7 +312,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       if (cloudLibrary) await syncModelToCloud(pack, files.length === 1 && /\.zip$/i.test(files[0].name) ? files[0] : undefined);
     } catch (error) {
       setModelNotice(error instanceof Error ? error.message : "Could not import this model.");
-    } finally { setModelImporting(false); }
+    } finally { setModelImporting(false); setModelPaused(wasPaused); }
   }
 
   async function syncModelToCloud(pack: ModelPackage, originalZip?: File) {
@@ -1704,8 +1709,8 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
                   <button className="floating-option model-import-primary" type="button" disabled={modelImporting || !modelsReady} onClick={() => modelZipRef.current?.click()}><Icon name="plus" size={16} />{modelImporting ? "Importing…" : "Import model ZIP"}</button>
                   <button className="floating-option" type="button" disabled={modelImporting || !modelsReady} onClick={() => modelFolderRef.current?.click()}>Choose folder</button>
                 </div>
-                <input ref={modelZipRef} hidden type="file" accept=".zip" onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void importModels(files); }} />
-                <input ref={modelFolderRef} hidden type="file" multiple {...{ webkitdirectory: "", directory: "" }} onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void importModels(files); }} />
+                <input ref={modelZipRef} hidden type="file" accept=".zip" onChange={(event) => { const input = event.currentTarget; const files = Array.from(input.files ?? []); void importModels(files).finally(() => { input.value = ""; }); }} />
+                <input ref={modelFolderRef} hidden type="file" multiple {...{ webkitdirectory: "", directory: "" }} onChange={(event) => { const input = event.currentTarget; const files = Array.from(input.files ?? []); void importModels(files).finally(() => { input.value = ""; }); }} />
                 <p className="floating-note">{cloudLibrary ? "New imports are saved privately to cloud and cached on this device." : "Models are saved on this device while cloud sync is unavailable."} Include the .model3.json, .moc3, textures and animation files. Up to 512 MiB per package.</p>
                 {cloudLibrary && <p className="floating-note">Models + scenes: {((cloudLibrary.usage.live2d.used + cloudLibrary.usage.other.used) / 1e9).toFixed(2)} / 8 GB shared. 2 GB stays unused as a safety buffer. Pending uploads count toward the budget.</p>}
                 {activePackage && cloudLibrary && !cloudLibrary.models.some((model) => model.id === activePackage.id) && <button className="floating-option" type="button" disabled={modelImporting} onClick={() => { void saveActiveModelToCloud(); }}>Save this model to cloud</button>}

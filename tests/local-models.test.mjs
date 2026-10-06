@@ -3,11 +3,59 @@ import { test } from 'node:test';
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { zipSync, strToU8 } from 'fflate';
+import { bufferedBlobReader } from '../lib/blob-reader.ts';
+import { loadRenderCopies, saveRenderCopies, clearRenderCopies } from '../lib/model-render-cache.ts';
 import { inspectPackage, importModelFiles, createModelResources, normalizePath, resolveAsset, loadModelPackages, loadModelCatalog, loadModelPackage, hydrateModelPackage, modelCatalogEntry, saveModelPackage, removeModelPackage } from '../lib/local-models.ts';
 
 const manifest = () => ({ Version: 3, FileReferences: { Moc: 'avatar.moc3', Textures: ['textures/tex.png'], Physics: 'physics.json', Pose: 'pose.json', Expressions: [{ Name: 'Happy', File: 'expressions/happy.exp3.json' }, { Name: 'เศร้า #', File: 'expressions/เศร้า #.exp3.json' }], Motions: { Idle: [{ File: 'motions/idle.motion3.json' }], Wave: [{ File: 'motions/wave.motion3.json', Sound: 'hello.wav' }] } } });
 const asset = (path, content = 'test') => ({ path, blob: new Blob([content]) });
 const assets = () => [asset('pack/avatar.model3.json', JSON.stringify(manifest())), ...['avatar.moc3','textures/tex.png','physics.json','pose.json','expressions/happy.exp3.json','expressions/เศร้า #.exp3.json','motions/idle.motion3.json','motions/wave.motion3.json','hello.wav','preview.png'].map((path) => asset(`pack/${path}`))];
+
+test('small inflation bursts use bounded batched Blob reads across block boundaries', async () => {
+  const bytes = Uint8Array.from({ length: 700_001 }, (_, index) => index % 251);
+  let reads = 0;
+  class CountingBlob extends Blob {
+    slice(start, end) { reads++; assert.ok(end - start <= 256 * 1024); return super.slice(start, end); }
+  }
+  const read = bufferedBlobReader(new CountingBlob([bytes]));
+  for (let offset = 0; offset < bytes.length; offset += 2048) {
+    assert.deepEqual(await read(offset, 2048), bytes.subarray(offset, offset + 2048));
+  }
+  assert.equal(reads, 3);
+  assert.deepEqual(await read(262_140, 12), bytes.subarray(262_140, 262_152));
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(bufferedBlobReader(new Blob([bytes]), controller.signal)(0, 1), { name: 'AbortError' });
+});
+
+test('disposable render cache reuses copies only for matching model and texture plans', async () => {
+  await clearRenderCopies();
+  const copies = new Map([['texture.png', new Blob(['render copy'])]]);
+  await saveRenderCopies('model-a:4096:area-v1', copies);
+  assert.equal(await (await loadRenderCopies('model-a:4096:area-v1')).get('texture.png').text(), 'render copy');
+  assert.equal(await loadRenderCopies('model-a:2048:area-v1'), undefined);
+  await saveRenderCopies('model-b:4096:area-v1', copies);
+  assert.equal(await loadRenderCopies('model-a:4096:area-v1'), undefined);
+  await clearRenderCopies();
+  assert.equal(await loadRenderCopies('model-b:4096:area-v1'), undefined);
+});
+
+test('rendering reuses a saved resized atlas without decoding the original again', async () => {
+  const header = new Uint8Array(24);
+  header.set([137,80,78,71,13,10,26,10]);
+  new DataView(header.buffer).setUint32(16, 8);
+  new DataView(header.buffer).setUint32(20, 8);
+  const files = assets();
+  files.find((entry) => entry.path === 'pack/textures/tex.png').blob = new Blob([header], { type: 'image/png' });
+  const pack = await inspectPackage(files, 'cached-render');
+  const key = JSON.stringify(['area-v1', pack.id, [['pack/textures/tex.png', 24, { source: { width: 8, height: 8 }, render: { width: 4, height: 4 } }]]]);
+  await saveRenderCopies(key, new Map([['pack/textures/tex.png', new Blob(['cached resized image'], { type: 'image/png' })]]));
+  // Node has no canvas: a cache miss would try resizing and fail this check.
+  const resources = await createModelResources(pack, pack.models[0], { maxDimension: 4, budgetBytes: 64 });
+  assert.equal(await (await fetch(resources.resolve('textures/tex.png'))).text(), 'cached resized image');
+  assert.equal(pack.assets.find((entry) => entry.path === 'pack/textures/tex.png').blob.size, 24);
+  resources.dispose();
+  await clearRenderCopies();
+});
 
 test('nested model package discovers actual expressions, motion groups/indices, and preview without using a texture atlas', async () => {
   const pack = await inspectPackage(assets(), 'fixture');

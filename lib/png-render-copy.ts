@@ -1,10 +1,12 @@
 import { Unzlib } from "fflate";
+import { bufferedBlobReader } from "./blob-reader.ts";
 
 /** Downsample scanlines without allocating a decoded source-sized bitmap.
  * Large interlaced/16-bit images are rejected before native image decoding. */
 export async function downsamplePng(blob: Blob, width: number, height: number, signal?: AbortSignal): Promise<Uint8ClampedArray<ArrayBuffer>> {
   signal?.throwIfAborted();
-  const header = new Uint8Array(await blob.slice(0, 33).arrayBuffer());
+  const read = bufferedBlobReader(blob, signal);
+  const header = await read(0, 33);
   if (header.length !== 33 || header.slice(0, 8).join() !== "137,80,78,71,13,10,26,10" || String.fromCharCode(...header.slice(12, 16)) !== "IHDR") throw new Error("Invalid PNG texture.");
   const view = new DataView(header.buffer);
   const sourceWidth = view.getUint32(16), sourceHeight = view.getUint32(20), color = header[25];
@@ -79,19 +81,19 @@ export async function downsamplePng(blob: Blob, width: number, height: number, s
   let offset = 33, sawData = false, sawEnd = false, lastYield = Date.now();
   while (offset + 12 <= blob.size) {
     signal?.throwIfAborted();
-    const chunk = new Uint8Array(await blob.slice(offset, offset + 8).arrayBuffer());
-    const length = new DataView(chunk.buffer).getUint32(0), type = String.fromCharCode(...chunk.slice(4));
+    const chunk = await read(offset, 8);
+    const length = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength).getUint32(0), type = String.fromCharCode(...chunk.slice(4));
     if (offset + length + 12 > blob.size) throw new Error("Truncated PNG texture.");
     if (type === "PLTE" || type === "tRNS") {
       if (sawData || length > 768) throw new Error("Invalid PNG color metadata.");
-      const bytes = new Uint8Array(await blob.slice(offset + 8, offset + 8 + length).arrayBuffer());
+      const bytes = (await read(offset + 8, length)).slice();
       if (type === "PLTE") palette = bytes; else transparency = bytes;
     } else if (type === "IDAT") {
       sawData = true;
       // Bound each inflation burst, including highly compressed transparent atlases.
       for (let start = 0; start < length; start += 2048) {
         signal?.throwIfAborted();
-        inflater.push(new Uint8Array(await blob.slice(offset + 8 + start, offset + 8 + Math.min(length, start + 2048)).arrayBuffer()), false);
+        inflater.push(await read(offset + 8 + start, Math.min(2048, length - start)), false);
         if (Date.now() - lastYield > 16) { await new Promise<void>((resolve) => setTimeout(resolve, 0)); lastYield = Date.now(); }
       }
     } else if (type === "IEND") { inflater.push(new Uint8Array(), true); sawEnd = true; break; }
