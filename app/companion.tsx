@@ -9,7 +9,7 @@ import { historyMessage, HISTORY_CACHE_KEY, type HistoryMessage, type HistoryCon
 import { authFetch } from "@/lib/auth/fetch";
 import { decayCompanionState, type CompanionState, defaultCompanionState, normalizeMood, moodLabel, type Mood } from "@/lib/companion";
 import { MODEL_CONFIG, type ModelKey } from "@/lib/models";
-import { createModelResources, importModelFiles, loadModelPackages, removeModelPackage, saveModelPackage, type ModelPackage, type ModelMotion } from "@/lib/local-models";
+import { createModelResources, importModelFiles, loadModelCatalog, loadModelPackage, modelCatalogEntry, removeModelPackage, saveModelPackage, type ModelPackage, type ModelMotion } from "@/lib/local-models";
 import { getCloudModels, cloudModelPlaceholder, uploadCloudModel, downloadCloudModel, deleteCloudModel, type CloudLibrary } from "@/lib/cloud-models";
 import { useSceneLibrary } from "@/lib/use-scene-library";
 import { SceneManager } from "@/app/components/scene-manager";
@@ -161,6 +161,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   const [textureQuality, setTextureQuality] = useState<"auto" | "original">("auto");
   const [modelReload, setModelReload] = useState(0);
   const [graphicsLost, setGraphicsLost] = useState(false);
+  const [modelPaused, setModelPaused] = useState(false);
   const [textureSummary, setTextureSummary] = useState<string | null>(null);
   const [activeExpression, setActiveExpression] = useState<string | null>(null);
   const [activeMotion, setActiveMotion] = useState<string | null>(null);
@@ -226,7 +227,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     let cancelled = false;
     const controller = new AbortController();
     void (async () => {
-      const [local, remote] = await Promise.allSettled([loadModelPackages(), getCloudModels(AbortSignal.any([controller.signal, AbortSignal.timeout(12_000)]))]);
+      const [local, remote] = await Promise.allSettled([loadModelCatalog(), getCloudModels(AbortSignal.any([controller.signal, AbortSignal.timeout(12_000)]))]);
       if (cancelled) return;
       const cloud = remote.status === "fulfilled" ? remote.value : null;
       setCloudLibrary(cloud);
@@ -236,10 +237,24 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       if (!cloud) setModelNotice("Cloud sync is unavailable. Models saved on this device still work.");
       const saved = localStorage.getItem("vivian-local-model");
       const selected = packages.some((pack) => pack.models.some((model) => model.id === saved)) ? saved : packages[0]?.models[0]?.id ?? null;
+      let interrupted = false;
+      // A killed Safari page cannot run cleanup or catch handlers. A breadcrumb
+      // lets its next load show usable chat instead of repeating the same load.
+      try {
+        if (selected && sessionStorage.getItem("vivian-model-loading") === selected) {
+          interrupted = true;
+          setModelPaused(true);
+          setModelStatus("error");
+          setModelNotice("The previous model load was interrupted. Auto loading is paused; use Reload model to retry with Auto quality.");
+        }
+      } catch { /* Storage restrictions do not block chat. */ }
       const pack = packages.find((entry) => entry.models.some((model) => model.id === selected));
-      if (pack && !pack.assets.length && cloud) {
+      if (pack && !pack.assets.length && !interrupted) {
         try {
-          const downloaded = await downloadCloudModel(cloud.models.find((model) => model.id === pack.id)!, cloud.userId, controller.signal);
+          const cached = await loadModelPackage(pack.id);
+          const remoteModel = cloud?.models.find((model) => model.id === pack.id);
+          const downloaded = cached ?? (remoteModel && cloud ? await downloadCloudModel(remoteModel, cloud.userId, controller.signal) : undefined);
+          if (!downloaded) throw new Error("Model files are unavailable.");
           if (cancelled) return;
           packages.splice(packages.indexOf(pack), 1, downloaded);
           setModelPackages([...packages]);
@@ -276,7 +291,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     try {
       const pack = await importModelFiles(files);
       await saveModelPackage(pack);
-      setModelPackages((current) => [...current, pack]);
+      setModelPackages((current) => [...current.map(modelCatalogEntry), pack]);
       setActiveModelId(pack.models[0].id);
       void navigator.storage?.persist?.().catch(() => {});
       if (cloudLibrary) await syncModelToCloud(pack, files.length === 1 && /\.zip$/i.test(files[0].name) ? files[0] : undefined);
@@ -309,12 +324,15 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     const pack = modelPackages.find((entry) => entry.models.some((model) => model.id === id));
     if (!pack) return;
     setModelNotice(null);
-    if (!pack.assets.length && cloudLibrary) {
+    if (!pack.assets.length) {
       setModelImporting(true); setModelNotice("Loading model from private cloud storage…");
       try {
-        const downloaded = await downloadCloudModel(cloudLibrary.models.find((model) => model.id === pack.id)!, cloudLibrary.userId);
+        const cached = await loadModelPackage(pack.id);
+        const remoteModel = cloudLibrary?.models.find((model) => model.id === pack.id);
+        const downloaded = cached ?? (remoteModel && cloudLibrary ? await downloadCloudModel(remoteModel, cloudLibrary.userId) : undefined);
+        if (!downloaded) throw new Error("Model files are unavailable.");
         await saveModelPackage(downloaded).catch(() => {});
-        setModelPackages((current) => current.map((entry) => entry.id === pack.id ? downloaded : entry));
+        setModelPackages((current) => current.map((entry) => entry.id === pack.id ? downloaded : modelCatalogEntry(entry)));
         setActiveModelId(id); setModelNotice(null);
       } catch (error) { setModelNotice(error instanceof Error ? error.message : "Could not load model."); }
       finally { setModelImporting(false); }
@@ -487,7 +505,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   }, []);
 
   useEffect(() => {
-    if (!preferencesReady || !modelsReady || graphicsLost) return;
+    if (!preferencesReady || !modelsReady || graphicsLost || modelPaused) return;
     setActiveExpression(null);
     setActiveMotion(null);
     if (!activeModel || !activePackage) { setModelStatus("empty"); return; }
@@ -501,9 +519,15 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     let handleOrientationChange = () => {};
     let resizeFrame: number | undefined;
     let resizeTimeout: number | undefined;
+    let stableTimer: number | undefined;
     let disposed = false;
     let ownedModel: any;
     const loadId = ++modelLoadIdRef.current;
+    const clearBreadcrumb = () => {
+      if (loadId !== modelLoadIdRef.current) return;
+      try { if (sessionStorage.getItem("vivian-model-loading") === activeModel.id) sessionStorage.removeItem("vivian-model-loading"); } catch { /* Optional crash recovery. */ }
+    };
+    try { sessionStorage.setItem("vivian-model-loading", activeModel.id); } catch { /* Optional crash recovery. */ }
     void (async () => {
       try {
         const PIXI = await import("pixi.js");
@@ -543,8 +567,8 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         const resources = await createModelResources(activePackage, activeModel, {
           // GPU limits alone do not account for framebuffers, decoded images,
           // Cubism masks and the rest of the page. Leave room for those too.
-          maxDimension: textureQuality === "original" ? maxTextureSize : Math.min(maxTextureSize, mobileDevice ? 4096 : 8192),
-          budgetBytes: (mobileDevice ? 64 : 256) * 1024 * 1024,
+          maxDimension: textureQuality === "original" ? Math.min(maxTextureSize, mobileDevice ? 4096 : 8192) : Math.min(maxTextureSize, mobileDevice ? 2048 : 4096),
+          budgetBytes: (mobileDevice ? 32 : 128) * 1024 * 1024,
           original: textureQuality === "original",
           signal: textureAbort.signal,
         });
@@ -608,6 +632,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         app.renderer.render(app.stage);
         if (app.renderer.gl.isContextLost()) throw new Error("Graphics memory is unavailable. Try Auto texture quality and reload the model.");
         setModelStatus("ready");
+        stableTimer = window.setTimeout(clearBreadcrumb, 15_000);
         if (!activeModel.previewPath) {
           try {
             app.renderer.render(app.stage);
@@ -632,6 +657,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         window.addEventListener("orientationchange", handleOrientationChange);
         window.visualViewport?.addEventListener("resize", queueResize);
       } catch (error) {
+        clearBreadcrumb();
         if (ownedModel) {
           app?.stage.removeChild(ownedModel);
           ownedModel.destroy({ children: true, texture: true, baseTexture: true });
@@ -649,9 +675,11 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     return () => {
       disposed = true;
       textureAbort.abort();
+      clearBreadcrumb();
       modelLoadIdRef.current += 1;
       if (resizeFrame) cancelAnimationFrame(resizeFrame);
       if (resizeTimeout) window.clearTimeout(resizeTimeout);
+      if (stableTimer) window.clearTimeout(stableTimer);
       window.removeEventListener("resize", queueResize);
       window.removeEventListener("orientationchange", handleOrientationChange);
       window.visualViewport?.removeEventListener("resize", queueResize);
@@ -667,7 +695,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       }
       releaseResources?.();
     };
-  }, [preferencesReady, modelsReady, activeModel, activePackage, textureQuality, modelReload, graphicsLost]);
+  }, [preferencesReady, modelsReady, activeModel, activePackage, textureQuality, modelReload, graphicsLost, modelPaused]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1648,7 +1676,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
                 </div>
                 {modelPackages.length > 0 && <label className="model-select-label">Model<select value={activeModelId ?? ""} disabled={modelImporting} onChange={(event) => { void chooseModel(event.target.value); }}>{modelPackages.flatMap((pack) => pack.models.map((model) => <option key={model.id} value={model.id}>{model.name}{cloudLibrary?.models.some((entry) => entry.id === pack.id) ? " · Cloud" : " · This device"}</option>))}</select></label>}
                 {activeModel && <label className="model-select-label">Texture quality<select value={textureQuality} onChange={(event) => { setModelNotice(null); setTextureQuality(event.target.value as "auto" | "original"); }}><option value="auto">Auto · fit this device</option><option value="original">Original textures</option></select></label>}
-                {activeModel && <button type="button" className="floating-option" disabled={modelStatus === "loading" || graphicsLost} onClick={() => { setModelNotice(null); setModelReload((value) => value + 1); }}>Reload model</button>}
+                {activeModel && <button type="button" className="floating-option" disabled={modelStatus === "loading" || graphicsLost || modelImporting} onClick={() => { void (async () => { setModelNotice(null); if (modelPaused) { setTextureQuality("auto"); await chooseModel(activeModel.id); } setModelPaused(false); setModelReload((value) => value + 1); })(); }}>Reload model</button>}
                 {textureSummary && <p className="floating-note">{textureSummary}. Original files stay unchanged.</p>}
                 <div className="model-import-actions">
                   <button className="floating-option model-import-primary" type="button" disabled={modelImporting || !modelsReady} onClick={() => modelZipRef.current?.click()}><Icon name="plus" size={16} />{modelImporting ? "Importing…" : "Import model ZIP"}</button>

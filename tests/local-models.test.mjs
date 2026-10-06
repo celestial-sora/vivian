@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import 'fake-indexeddb/auto';
+import { IDBFactory } from 'fake-indexeddb';
 import { zipSync, strToU8 } from 'fflate';
-import { inspectPackage, importModelFiles, createModelResources, normalizePath, resolveAsset, loadModelPackages, saveModelPackage, removeModelPackage } from '../lib/local-models.ts';
+import { inspectPackage, importModelFiles, createModelResources, normalizePath, resolveAsset, loadModelPackages, loadModelCatalog, loadModelPackage, saveModelPackage, removeModelPackage } from '../lib/local-models.ts';
 
 const manifest = () => ({ Version: 3, FileReferences: { Moc: 'avatar.moc3', Textures: ['textures/tex.png'], Physics: 'physics.json', Pose: 'pose.json', Expressions: [{ Name: 'Happy', File: 'expressions/happy.exp3.json' }, { Name: 'เศร้า #', File: 'expressions/เศร้า #.exp3.json' }], Motions: { Idle: [{ File: 'motions/idle.motion3.json' }], Wave: [{ File: 'motions/wave.motion3.json', Sound: 'hello.wav' }] } } });
 const asset = (path, content = 'test') => ({ path, blob: new Blob([content]) });
@@ -54,12 +55,17 @@ test('model resources resolve to private blob URLs including Unicode paths and a
 test('browser storage saves blobs, restores package metadata, and removes imported packages', async () => {
   const pack = await inspectPackage(assets());
   await saveModelPackage(pack);
+  const catalog = await loadModelCatalog();
+  assert.deepEqual(catalog[0].assets, []);
+  assert.deepEqual(catalog[0].models, pack.models);
+  assert.equal(await (await loadModelPackage(pack.id)).assets[0].blob.text(), await pack.assets[0].blob.text());
   const stored = await loadModelPackages();
   assert.equal(stored.length, 1);
   assert.deepEqual(stored[0].models, pack.models);
   assert.equal(await stored[0].assets[0].blob.text(), await pack.assets[0].blob.text());
   await removeModelPackage(pack.id);
   assert.deepEqual(await loadModelPackages(), []);
+  assert.deepEqual(await loadModelCatalog(), []);
 });
 
 test('artist packages with undeclared expressions/motions are discovered without mixing nested models', async () => {
@@ -82,4 +88,25 @@ test('pose expressions remain available in Expression and also appear in Pose', 
   const pack = await inspectPackage(files);
   assert.deepEqual(pack.models[0].poses,['坐姿']);
   assert.deepEqual(pack.models[0].expressions,['坐姿','Happy']);
+});
+
+test('version-one caches migrate to a metadata catalog while preserving originals', async () => {
+  const original = globalThis.indexedDB;
+  globalThis.indexedDB = new IDBFactory();
+  try {
+    const pack = await inspectPackage(assets(), 'legacy');
+    const db = await new Promise((resolve,reject)=>{
+      const request=indexedDB.open('vivian-local-models',1);
+      request.onupgradeneeded=()=>request.result.createObjectStore('packages',{keyPath:'id'});
+      request.onsuccess=()=>resolve(request.result); request.onerror=()=>reject(request.error);
+    });
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('packages','readwrite');tx.objectStore('packages').put(pack);
+      tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+    });
+    db.close();
+    assert.deepEqual(await loadModelCatalog(),[{id:pack.id,models:pack.models,assets:[]}]);
+    const hydrated=await loadModelPackage(pack.id);
+    assert.equal(await hydrated.assets[0].blob.text(),await pack.assets[0].blob.text());
+  } finally { globalThis.indexedDB=original; }
 });

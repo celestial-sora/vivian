@@ -140,20 +140,34 @@ export async function importModelFiles(files: File[]): Promise<ModelPackage> {
   let assets: ModelAsset[];
   if (files.length === 1 && /\.zip$/i.test(files[0].name)) {
     if (files[0].size > MAX_BYTES) throw new Error("ZIP exceeds 512 MB.");
-    const { unzip } = await import("fflate");
-    const bytes = new Uint8Array(await files[0].arrayBuffer());
-    const extracted = await new Promise<Record<string, Uint8Array>>((resolve, reject) => {
-      let size = 0;
-      let count = 0;
-      let limitError: Error | undefined;
-      unzip(bytes, { filter: (file) => {
-        if (file.name.endsWith("/") || file.name.startsWith("__MACOSX/")) return false;
-        size += file.originalSize; count++;
-        if (size > MAX_BYTES || count > MAX_FILES) { limitError = new Error("Expanded ZIP exceeds 512 MB or 3,000 files."); return false; }
-        return true;
-      } }, (error, result) => limitError ? reject(limitError) : error ? reject(error) : resolve(result));
+    const { Unzip, UnzipInflate } = await import("fflate");
+    assets = [];
+    let bytes = 0, declaredBytes = 0, count = 0, pending = 0;
+    const unzip = new Unzip((file) => {
+      if (file.name.endsWith("/") || file.name.startsWith("__MACOSX/")) { file.ondata = () => {}; file.start(); return; }
+      declaredBytes += file.originalSize ?? 0; count++; pending++;
+      if (declaredBytes > MAX_BYTES || count > MAX_FILES) throw new Error("Expanded ZIP exceeds 512 MB or 3,000 files.");
+      const chunks: Blob[] = [];
+      file.ondata = (error, data, final) => {
+        if (error) throw error;
+        bytes += data.byteLength;
+        if (bytes > MAX_BYTES) throw new Error("Expanded ZIP exceeds 512 MB or 3,000 files.");
+        chunks.push(new Blob([new Uint8Array(data)]));
+        if (final) {
+          assets.push({ path: file.name, blob: new Blob(chunks, { type: mime(file.name) }) });
+          chunks.length = 0; pending--;
+        }
+      };
+      file.start();
     });
-    assets = Object.entries(extracted).map(([path, bytes]) => ({ path, blob: new Blob([new Uint8Array(bytes)], { type: mime(path) }) }));
+    unzip.register(UnzipInflate);
+    // Read bounded compressed blocks and convert output into Blob pieces;
+    // never hold both full ZIP and full expanded typed-array maps in memory.
+    for (let offset = 0; offset < files[0].size; offset += 2048) {
+      unzip.push(new Uint8Array(await files[0].slice(offset, offset + 2048).arrayBuffer()), offset + 2048 >= files[0].size);
+      if (offset % (256 * 1024) === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    if (pending) throw new Error("Model ZIP is incomplete.");
   } else assets = files.map((file) => ({ path: file.webkitRelativePath || file.name, blob: file }));
   return inspectPackage(assets);
 }
@@ -201,16 +215,33 @@ export async function createModelResources(pack: ModelPackage, model: LocalModel
     dispose: () => { disposed = true; for (const url of urls.values()) URL.revokeObjectURL(url); urls.clear(); renderCopies.clear(); } };
 }
 
-async function storage<T>(mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
-  const db = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open("vivian-local-models", 1);
-    request.onupgradeneeded = () => request.result.createObjectStore("packages", { keyPath: "id" });
+async function openStorage(): Promise<IDBDatabase> {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open("vivian-local-models", 2);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      const packages = db.objectStoreNames.contains("packages") ? request.transaction!.objectStore("packages") : db.createObjectStore("packages", { keyPath: "id" });
+      const catalog = db.createObjectStore("catalog", { keyPath: "id" });
+      // Upgrade one record at a time rather than materializing the entire library.
+      const cursor = packages.openCursor();
+      cursor.onsuccess = () => {
+        const entry = cursor.result;
+        if (!entry) return;
+        catalog.put(modelCatalogEntry(entry.value)); entry.continue();
+      };
+    };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
+}
+export function modelCatalogEntry(pack: ModelPackage): ModelPackage {
+  return { id: pack.id, models: pack.models, assets: [], ...(pack.cloudOwner ? { cloudOwner: pack.cloudOwner } : {}) };
+}
+async function storage<T>(mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest<T>, storeName = "packages"): Promise<T> {
+  const db = await openStorage();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction("packages", mode);
-    const request = operation(tx.objectStore("packages"));
+    const tx = db.transaction(mode === "readwrite" ? ["packages", "catalog"] : storeName, mode);
+    const request = operation(tx.objectStore(storeName));
     let result: T;
     request.onsuccess = () => { result = request.result; };
     tx.oncomplete = () => { db.close(); resolve(result); };
@@ -221,5 +252,13 @@ export async function loadModelPackages(): Promise<ModelPackage[]> {
   const packages = await storage<ModelPackage[]>("readonly", (store) => store.getAll());
   return Promise.all(packages.map(async (pack) => ({ ...await inspectPackage(pack.assets, pack.id), ...(pack.cloudOwner ? { cloudOwner: pack.cloudOwner } : {}) })));
 }
-export const saveModelPackage = (pack: ModelPackage): Promise<IDBValidKey> => storage("readwrite", (store) => store.put(pack));
-export const removeModelPackage = (id: string): Promise<undefined> => storage("readwrite", (store) => store.delete(id));
+export const loadModelCatalog = (): Promise<ModelPackage[]> => storage("readonly", (store) => store.getAll(), "catalog");
+export const loadModelPackage = (id: string): Promise<ModelPackage | undefined> => storage("readonly", (store) => store.get(id));
+export const saveModelPackage = (pack: ModelPackage): Promise<IDBValidKey> => storage("readwrite", (store) => {
+  store.transaction.objectStore("catalog").put(modelCatalogEntry(pack));
+  return store.put(pack);
+});
+export const removeModelPackage = (id: string): Promise<undefined> => storage("readwrite", (store) => {
+  store.transaction.objectStore("catalog").delete(id);
+  return store.delete(id);
+});

@@ -27,6 +27,21 @@ export async function readTextureSize(blob: Blob): Promise<TextureSize> {
 
 export async function resizeTexture(blob: Blob, size: TextureSize, signal?: AbortSignal): Promise<Blob> {
   signal?.throwIfAborted();
+  const source = await readTextureSize(blob);
+  if (source.width * source.height > 4096 * 4096) {
+    const { downsamplePng } = await import("./png-render-copy");
+    const pixels = await downsamplePng(blob, size.width, size.height, signal);
+    const canvas = document.createElement("canvas");
+    try {
+      canvas.width = size.width; canvas.height = size.height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Could not prepare the texture.");
+      context.putImageData(new ImageData(pixels, size.width, size.height), 0, 0);
+      const output = await new Promise<Blob>((resolve, reject) => canvas.toBlob((result) => result ? resolve(result) : reject(new Error("Texture conversion failed.")), "image/png"));
+      signal?.throwIfAborted();
+      return output;
+    } finally { canvas.width = canvas.height = 1; }
+  }
   if (typeof createImageBitmap !== "function") throw new Error("Auto quality needs image resizing support. Try a current browser.");
   // Decode straight to the target size, one atlas at a time, and release
   // ImageBitmap/canvas memory immediately after encoding the render copy.
