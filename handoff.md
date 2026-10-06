@@ -384,3 +384,5 @@ Follow up only where needed: verify live Google provider configuration and produ
 - Time tool already formats with `Asia/Bangkok`; expanded deterministic detection for Thai/English current-time/date queries and GMT+7/UTC+7 wording. Tool evidence now explicitly identifies Bangkok, GMT+7 and UTC+07:00 and prevents adding the offset twice.
 - Shared chat prompt defaults unspecified time/date questions to Bangkok and current time-tool evidence, avoiding server UTC and stale conversation times. Explicit timezone requests remain supported; unavailable evidence must not produce a guessed current time.
 - TypeScript and whitespace checks passed. No tests were added or run for this follow-up. Pre-existing expression-layer edits remain untouched. Production deployment result will follow.
+
+- Bangkok time fix deployed from `87a76205702beff9236d353e7d7ab5cc8c4edc4b`: Vercel `dpl_BhcuwyNcpSuScdpsdJs9tgqVrNa3` is READY. https://vivianlabs.vercel.app resolves to this deployment and login returns 200. Production build/TypeScript passed. No authenticated LLM request was made for deployment verification.
