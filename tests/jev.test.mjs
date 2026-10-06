@@ -394,9 +394,9 @@ test("fresh greetings request only 120 output tokens across text providers", asy
 test("Vivian keeps all voice references in source but only sends the relevant scene", async () => {
   for (const [message, scene, quote] of [
     ["วันนี้อากาศร้อนจังเลย", 0, "ชานมเย็น"],
-    ["อรุณสวัสดิ์", 1, "หนูยังง่วงอยู่เลย"],
-    ["วันนี้ชุดน่ารักจัง", 2, "สายตาอันตราย"],
-    ["ปวดหัว", 3, "หน้าซีด"],
+    ["อรุณสวัสดิ์", 1, "เริ่มดี ๆ"],
+    ["วันนี้ชุดน่ารักจัง", 2, "หนูเตรียมใจไม่ทัน"],
+    ["ปวดหัว", 3, "ไม่ต้องฝืน"],
     ["ขอโทษที่หายไปนาน", 4, "สายหายตัว"],
   ]) {
     const fixture = chatFixture({ values: { needs_current_information: 0.01 } });
@@ -408,7 +408,7 @@ test("Vivian keeps all voice references in source but only sends the relevant sc
     assert.ok(reference.includes(quote));
     assert.equal((reference.match(/แบบที่ \d:/g) ?? []).length, 1);
     assert.ok(reference.length < dialogue.VIVIAN_DIALOGUE_EXAMPLE.length * 0.65);
-    assert.ok(reference.includes("ยูกิ” เป็นชื่อผู้ใช้ในตัวอย่างเท่านั้น"));
+    assert.ok(reference.includes("โซระจังเป็นชื่อผู้ใช้ในตัวอย่าง"));
   }
 });
 

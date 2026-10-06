@@ -386,3 +386,10 @@ Follow up only where needed: verify live Google provider configuration and produ
 - TypeScript and whitespace checks passed. No tests were added or run for this follow-up. Pre-existing expression-layer edits remain untouched. Production deployment result will follow.
 
 - Bangkok time fix deployed from `87a76205702beff9236d353e7d7ab5cc8c4edc4b`: Vercel `dpl_BhcuwyNcpSuScdpsdJs9tgqVrNa3` is READY. https://vivianlabs.vercel.app resolves to this deployment and login returns 200. Production build/TypeScript passed. No authenticated LLM request was made for deployment verification.
+
+## 2026-10-06 — Vivian personal assistant persona
+
+- User requested a stronger tsundere voice using the supplied Alya profile as inspiration while retaining Vivian as sorachan's personal assistant, including her backstory. Replaced the school/classmate canon with Vivian's own orderly, proud assistant character, desk/notebook/tea details, and motivation to help sorachan without overwork. Canon stays separate from learned history and survives memory reset.
+- Strengthened the core prompt to confident, composed, visibly stubborn warmth (roughly 70/30 tsun/dere as flexible guidance). Rewrote all selective dialogue examples, including practical task help and supportive illness responses. Kept Thai speech without Alya's Russian signature, name, or history. Normal conversation does not volunteer AI/system/prompt explanations; direct identity/capability questions remain truthful. No real-world completed actions or shared memories are fabricated.
+- Verification: TypeScript, production build, whitespace check and 71 JEV/chat, companion, speech and reset tests pass. Updated the existing selective-scene fixtures to the new dialogue. Full lint retains the previously recorded 20 errors/310 warnings. Tests mock upstream services; no live LLM/personality evaluation or cloud memory writes.
+- Preserved pre-existing app/companion.tsx and lib/expression-layers.ts work. No push or deployment: the current safe-continuation rule requires a deployment request.
