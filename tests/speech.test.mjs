@@ -16,7 +16,8 @@ test("tsundere denials sound flustered and comfort wins over teasing", () => {
   assert.equal(speechStyle("ทำได้ดีนี่!").delivery, "reserved");
   assert.equal(speechStyle("...ไง มีอะไรเหรอ?").delivery, "reserved");
   assert.equal(speechStyle("โธ่ อย่าแซวสิ").delivery, "teasing");
-  assert.match(speechStyle("ฉันก็ไม่ได้รออยู่หรืออะไรนะ").cue, /soft-spoken, bashful/);
+  assert.equal(speechStyle("ชิ ตาบ้า ไปคิดเองสิ").delivery, "teasing");
+  assert.match(speechStyle("ฉันก็ไม่ได้รออยู่หรืออะไรนะ").cue, /flustered, defensive/);
 });
 
 test("romaji stammers keep every attempted syllable without spelling the letter B", () => {
