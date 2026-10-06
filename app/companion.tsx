@@ -338,18 +338,29 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     if (modelImporting) return;
     const pack = modelPackages.find((entry) => entry.models.some((model) => model.id === id));
     if (!pack) return;
+    const wasPaused = modelPaused;
+    setModelImporting(true);
+    setModelPaused(true);
     setModelNotice(null);
-    if (!pack.assets.length) {
-      setModelImporting(true); setModelNotice("Loading model from private cloud storage…");
-      try {
-        const downloaded = await availableModelPackage(pack, cloudLibrary);
-        if (!downloaded) throw new Error("Model files are unavailable.");
-        await saveModelPackage(downloaded).catch(() => {});
-        setModelPackages((current) => current.map((entry) => entry.id === pack.id ? downloaded : modelCatalogEntry(entry)));
-        setActiveModelId(id); setModelNotice(null);
-      } catch (error) { setModelNotice(error instanceof Error ? error.message : "Could not load model."); }
-      finally { setModelImporting(false); }
-    } else setActiveModelId(id);
+    try {
+      // Release the current GPU model before hydrating another package, and
+      // validate even in-memory Blob handles after a Safari reload.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      setModelNotice("Loading model files…");
+      const downloaded = await availableModelPackage(pack, cloudLibrary);
+      if (!downloaded) throw new Error("Model files are unavailable.");
+      if (!downloaded.models.some((model) => model.id === id)) throw new Error("This model is no longer in the package. Select another model.");
+      if (downloaded !== pack) await saveModelPackage(downloaded).catch(() => {});
+      setModelPackages((current) => current.map((entry) => entry.id === pack.id ? downloaded : modelCatalogEntry(entry)));
+      setActiveModelId(id);
+      setModelNotice(null);
+      // Crash recovery pauses automatic startup only. An explicit selection
+      // must resume rendering, including choosing the same model to retry.
+      setModelPaused(false);
+    } catch (error) {
+      setModelNotice(error instanceof Error ? error.message : "Could not load model.");
+      setModelPaused(wasPaused);
+    } finally { setModelImporting(false); }
   }
 
   async function removeActiveModel() {
