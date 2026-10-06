@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
-import { zipSync, strToU8, deflateSync } from 'fflate';
+import { zipSync, strToU8, deflateSync, Zip, ZipDeflate, ZipPassThrough, unzipSync } from 'fflate';
 import { bufferedBlobReader } from '../lib/blob-reader.ts';
 import { loadRenderCopies, saveRenderCopies, clearRenderCopies } from '../lib/model-render-cache.ts';
 import { inspectPackage, importModelFiles, createModelResources, normalizePath, resolveAsset, loadModelPackages, loadModelCatalog, loadModelPackage, hydrateModelPackage, modelCatalogEntry, saveModelPackage, removeModelPackage } from '../lib/local-models.ts';
@@ -74,6 +74,46 @@ test('ZIP extraction and folder input preserve paths and multiple outfits', asyn
   assert.equal(pack.models.length, 2);
   const folder = files.map((asset) => { const file = new File([asset.blob], asset.path.split('/').at(-1)); Object.defineProperty(file, 'webkitRelativePath', { value: asset.path }); return file; });
   assert.deepEqual((await importModelFiles(folder)).models.map((model) => model.name), ['avatar', 'alternate']);
+});
+
+test('ZIP signatures inside assets cannot truncate valid data-descriptor archives', async () => {
+  const payload = new Uint8Array(6000);
+  payload.set([80,75,3,4], 900);
+  payload.set([80,75,7,8], 1800);
+  payload.set([80,75,1,2], 3000);
+  for (const Format of [ZipPassThrough, ZipDeflate]) {
+    const chunks = [];
+    const zip = new Zip((error, data) => { if (error) throw error; chunks.push(data.slice()); });
+    const entries = [
+      ['avatar.model3.json', strToU8(JSON.stringify({ Version: 3, FileReferences: { Moc: 'avatar.moc3', Textures: ['texture.png'] } }))],
+      ['avatar.moc3', payload], ['texture.png', new Uint8Array([1,2,3])],
+    ];
+    for (const [path, bytes] of entries) {
+      const file = new Format(path, { level: 0 }); zip.add(file);
+      file.push(bytes.subarray(0, 2753), bytes.length <= 2753);
+      if (bytes.length > 2753) file.push(bytes.subarray(2753), true);
+    }
+    zip.end();
+    const archive = new File(chunks, 'descriptor.zip');
+    // The nonstreaming reference decoder confirms this archive is complete.
+    assert.deepEqual(unzipSync(new Uint8Array(await archive.arrayBuffer()))['avatar.moc3'], payload);
+    const pack = await importModelFiles([archive]);
+    assert.deepEqual(new Uint8Array(await pack.assets.find((entry) => entry.path === 'avatar.moc3').blob.arrayBuffer()), payload);
+    assert.equal(pack.assets.length, 3);
+  }
+});
+
+test('ZIP extraction reports the failing asset when data or checksum is corrupt', async () => {
+  const encoded = zipSync({
+    'avatar.model3.json': strToU8(JSON.stringify({ Version: 3, FileReferences: { Moc: 'avatar.moc3', Textures: ['texture.png'] } })),
+    'avatar.moc3': strToU8('original'), 'texture.png': new Uint8Array([1,2,3]),
+  });
+  const view = new DataView(encoded.buffer, encoded.byteOffset, encoded.byteLength);
+  const directory = view.getUint32(encoded.length - 6, true);
+  view.setUint32(directory + 16, view.getUint32(directory + 16, true) ^ 1, true);
+  await assert.rejects(importModelFiles([new File([encoded], 'corrupt.zip')]), /avatar.model3.json.*checksum/);
+  const truncated = encoded.subarray(0, encoded.length - 25);
+  await assert.rejects(importModelFiles([new File([truncated], 'truncated.zip')]), /directory.*incomplete/);
 });
 
 function zipCrc(bytes) {
