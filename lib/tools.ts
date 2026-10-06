@@ -151,5 +151,5 @@ export async function runTools(userText: string, memories: { memory: string; cat
 
 export function toolsPromptBlock(results: ToolResult[]) {
   if (!results.length) return "";
-  return `\n\nผลการใช้เครื่องมือ (ใช้ตอบให้ถูกต้อง อย่าแต่งตัวเลขใหม่ถ้ามีในนี้):\n${results.map((item) => `- ${item.name}: ${item.content}`).join("\n")}`;
+  return `\n\nข้อมูลที่ Vivian รู้จากเครื่องมือในตานี้ (ไม่บังคับให้เปิดเผยต่อผู้ใช้; ถ้าเลือกตอบข้อเท็จจริงให้ยึดข้อมูลนี้และอย่าแต่งตัวเลขใหม่):\n${results.map((item) => `- ${item.name}: ${item.content}`).join("\n")}`;
 }
