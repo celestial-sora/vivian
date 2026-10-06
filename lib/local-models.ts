@@ -1,6 +1,5 @@
 /** Validated Cubism packages; originals stay in IndexedDB and may sync to private R2. */
 import type { TextureBudget, TexturePlan } from "./model-textures";
-import { bufferedBlobReader, bufferedBlobWriter } from "./blob-reader.ts";
 export interface ModelAsset { path: string; blob: Blob }
 export interface ModelMotion { group: string; index: number; name: string }
 export interface LocalModel {
@@ -141,39 +140,11 @@ export async function importModelFiles(files: File[]): Promise<ModelPackage> {
   let assets: ModelAsset[];
   if (files.length === 1 && /\.zip$/i.test(files[0].name)) {
     if (files[0].size > MAX_BYTES) throw new Error("ZIP exceeds 512 MB.");
-    const { Unzip, UnzipInflate } = await import("fflate");
-    const { zipPathMaps } = await import("./zip-paths.ts");
-    const pathMaps = await zipPathMaps(files[0]);
-    assets = [];
-    let bytes = 0, declaredBytes = 0, count = 0, pending = 0;
-    const unzip = new Unzip((file) => {
-      if (file.name.endsWith("/") || file.name.startsWith("__MACOSX/")) { file.ondata = () => {}; file.start(); return; }
-      declaredBytes += file.originalSize ?? 0; count++; pending++;
-      if (declaredBytes > MAX_BYTES || count > MAX_FILES) throw new Error("Expanded ZIP exceeds 512 MB or 3,000 files.");
-      const writer = bufferedBlobWriter(mime(file.name));
-      file.ondata = (error, data, final) => {
-        if (error) throw error;
-        bytes += data.byteLength;
-        if (bytes > MAX_BYTES) throw new Error("Expanded ZIP exceeds 512 MB or 3,000 files.");
-        writer.push(data);
-        if (final) {
-          assets.push({ path: file.name, blob: writer.finish() });
-          pending--;
-        }
-      };
-      file.start();
-    });
-    unzip.register(UnzipInflate);
-    // Read bounded compressed blocks and convert output into Blob pieces;
-    // never hold both full ZIP and full expanded typed-array maps in memory.
-    const read = bufferedBlobReader(files[0]);
-    for (let offset = 0; offset < files[0].size; offset += 2048) {
-      unzip.push(await read(offset, 2048), offset + 2048 >= files[0].size);
-      if (offset % (256 * 1024) === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    }
-    if (pending) throw new Error("Model ZIP is incomplete.");
+    const { extractModelZip } = await import("./model-zip.ts");
+    const extracted = await extractModelZip(files[0], MAX_BYTES, MAX_FILES);
+    assets = extracted.assets.map((asset) => ({ path: asset.path, blob: new Blob([asset.blob], { type: mime(asset.path) }) }));
     let pathError: unknown;
-    for (const paths of pathMaps) {
+    for (const paths of extracted.paths) {
       try {
         // Decode only ZIP entry metadata. Manifest references stay untouched.
         return await inspectPackage(assets.map((asset) => ({ ...asset, path: paths.get(asset.path) ?? asset.path })));

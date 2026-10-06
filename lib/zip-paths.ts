@@ -4,19 +4,26 @@ import { bufferedBlobReader } from "./blob-reader.ts";
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const cp437 = "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ";
 const dosName = (bytes: Uint8Array) => Array.from(bytes, (byte) => byte < 128 ? String.fromCharCode(byte) : cp437[byte - 128]).join("");
-function crc32(bytes: Uint8Array): number {
-  let crc = -1;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
-  }
-  return (crc ^ -1) >>> 0;
+const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit++) value = (value >>> 1) ^ (value & 1 ? 0xedb88320 : 0);
+  return value >>> 0;
+});
+export function updateZipCrc(bytes: Uint8Array, crc = -1): number {
+  for (let index = 0; index < bytes.length; index++) crc = (crc >>> 8) ^ crcTable[(crc ^ bytes[index]) & 255];
+  return crc;
+}
+const crc32 = (bytes: Uint8Array) => (updateZipCrc(bytes) ^ -1) >>> 0;
+
+export interface ZipEntry {
+  name: string; flags: number; compression: number; crc: number;
+  size: number; originalSize: number; offset: number;
 }
 
 /** Central-directory Unicode Path fields are authoritative only with a valid
  * filename CRC. Untagged archives may use UTF-8, Windows Chinese, or DOS names.
  * Return coherent alternatives; the manifest's exact references validate them. */
-export async function zipPathMaps(blob: Blob): Promise<Array<Map<string, string>>> {
+export async function readZipDirectory(blob: Blob): Promise<{ paths: Array<Map<string, string>>; entries: ZipEntry[]; start: number }> {
   const tailStart = Math.max(0, blob.size - 65_557);
   const tail = new Uint8Array(await blob.slice(tailStart).arrayBuffer());
   const tailView = new DataView(tail.buffer);
@@ -40,6 +47,7 @@ export async function zipPathMaps(blob: Blob): Promise<Array<Map<string, string>
   }
   if (count > 6000 || start + size > tailStart + end) throw new Error("Invalid model ZIP directory.");
   const maps = [new Map<string, string>(), new Map<string, string>()];
+  const entries: ZipEntry[] = [];
   const read = bufferedBlobReader(blob);
   let offset = start;
   for (let entry = 0; entry < count; entry++) {
@@ -48,6 +56,7 @@ export async function zipPathMaps(blob: Blob): Promise<Array<Map<string, string>
     const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
     if (view.getUint32(0, true) !== 0x02014b50) throw new Error("Invalid model ZIP entry.");
     const flags = view.getUint16(8, true), nameSize = view.getUint16(28, true), extraSize = view.getUint16(30, true), commentSize = view.getUint16(32, true);
+    let compressedSize = view.getUint32(20, true), originalSize = view.getUint32(24, true), localOffset = view.getUint32(42, true);
     if (offset + 46 + nameSize + extraSize + commentSize > start + size) throw new Error("Truncated model ZIP entry.");
     const name = (await read(offset + 46, nameSize)).slice();
     const extra = await read(offset + 46 + nameSize, extraSize);
@@ -58,6 +67,18 @@ export async function zipPathMaps(blob: Blob): Promise<Array<Map<string, string>
       if (position + 4 + length > extra.length) throw new Error("Invalid ZIP filename metadata.");
       if (type === 0x7075 && length >= 5 && extra[position + 4] === 1 && field.getUint32(5, true) === crc32(name)) {
         unicode = utf8.decode(extra.subarray(position + 9, position + 4 + length));
+      }
+      if (type === 1) {
+        let cursor = 4;
+        const wide = () => {
+          if (cursor + 8 > length + 4) throw new Error("Invalid ZIP64 entry sizes.");
+          const value = Number(field.getBigUint64(cursor, true)); cursor += 8;
+          if (!Number.isSafeInteger(value)) throw new Error("Invalid ZIP64 entry sizes.");
+          return value;
+        };
+        if (originalSize === 0xffffffff) originalSize = wide();
+        if (compressedSize === 0xffffffff) compressedSize = wide();
+        if (localOffset === 0xffffffff) localOffset = wide();
       }
       position += 4 + length;
     }
@@ -74,7 +95,9 @@ export async function zipPathMaps(blob: Blob): Promise<Array<Map<string, string>
       if (maps[variant].has(key) && maps[variant].get(key) !== decoded[variant]) throw new Error("Ambiguous model ZIP filenames.");
       maps[variant].set(key, decoded[variant]);
     }
+    if ([compressedSize, originalSize, localOffset].includes(0xffffffff) || localOffset + compressedSize > start || view.getUint16(34, true)) throw new Error("Invalid model ZIP entry bounds.");
+    entries.push({ name: strFromU8(name, !(flags & 2048)), flags, compression: view.getUint16(10, true), crc: view.getUint32(16, true), size: compressedSize, originalSize, offset: localOffset });
     offset += 46 + nameSize + extraSize + commentSize;
   }
-  return maps;
+  return { paths: maps, entries, start };
 }
