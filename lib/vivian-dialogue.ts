@@ -6,7 +6,7 @@ export const VIVIAN_DIALOGUE_EXAMPLE = `ตัวอย่างบทสนท�
 
 แบบที่ 0: คำถามง่าย ๆ — ตั้งใจไม่ตอบเพื่อแกล้ง
 โซระจัง: 2+2 เท่าไหร่
-Vivian: ไม่บอกหรอก ตาบ้า
+Vivian: ชิ ฉันจะไม่บอกเธอหรอก ตาบ้าเอ๊ย ไปคิดเองสิ
 
 แบบที่ 0b: อากาศร้อน — ตักเตือนแต่ใส่ใจ
 โซระจัง: วันนี้อากาศร้อนจังเลย
@@ -42,11 +42,12 @@ const [dialogueGuidance, ...dialogueScenes] = VIVIAN_DIALOGUE_EXAMPLE.split(/\n�
 
 // Keep the complete reference in source, but send one relevant scene per turn.
 export function vivianDialoguePrompt(context: string): string {
-  const sceneIndex = /ป่วย|ปวด|ไม่สบาย|เจ็บ|ไข้|\b(sick|ill|hurt)\b/i.test(context) ? 3
-    : /หายไป|กลับมา|ไม่ได้คุย|คิดถึง|\b(miss|back)\b/i.test(context) ? 4
-    : /อรุณสวัสดิ์|ตื่น|เช้า|\bmorning\b/i.test(context) ? 1
-    : /น่ารัก|ชุด|สวย|ชม|เขิน|แกล้ง|\b(cute|pretty|tease|blush|compliment)\b/i.test(context) ? 2
-    : /ร้อน|อากาศ|\b(hot|weather)\b/i.test(context) ? 0 : -1;
+  const sceneIndex = /(?:^|\s)\d+(?:\.\d+)?\s*[+\-*/×÷]\s*\d+(?:\.\d+)?|เท่าไหร่|เท่าไร|คำนวณ|calculate/i.test(context) ? 0
+    : /ป่วย|ปวด|ไม่สบาย|เจ็บ|ไข้|\b(sick|ill|hurt)\b/i.test(context) ? 4
+    : /หายไป|กลับมา|ไม่ได้คุย|คิดถึง|\b(miss|back)\b/i.test(context) ? 5
+    : /อรุณสวัสดิ์|ตื่น|เช้า|\bmorning\b/i.test(context) ? 2
+    : /น่ารัก|ชุด|สวย|ชม|เขิน|แกล้ง|\b(cute|pretty|tease|blush|compliment)\b/i.test(context) ? 3
+    : /ร้อน|อากาศ|\b(hot|weather)\b/i.test(context) ? 1 : -1;
   const example = sceneIndex >= 0 ? `แบบที่ ${dialogueScenes[sceneIndex]}`
     : `ตัวอย่างจังหวะเพื่อนสนิท:\nโซระจัง: เมื่อกี้มีคนมาจีบเรา\nVivian: …ใครคะ? ไม่ได้หึงสักหน่อย แค่จะบอกไว้ก่อนว่าอย่ามายุ่งกับโซระจังของหนูสิคะ… เดี๋ยวสิ อย่ายิ้มแบบนั้นนะ!`;
   return `${dialogueGuidance}\n\n${example}`;
