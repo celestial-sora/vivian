@@ -99,7 +99,7 @@ test("response guidance is static, confidence-gated, and preserves Vivian's pers
   const supportive = plan(context("I need reassurance"), { supportive_response: 0.99 });
   assert.match(supportive.responseHint, /gentle support.*Vivian's established personality/);
   const explanatory = plan(context("Explain it"), { explanatory_response: 0.95 });
-  assert.match(explanatory.responseHint, /Explain the answer clearly/);
+  assert.match(explanatory.responseHint, /Do not force an explanation or a useful answer/);
   const decision = jev.parseJevDecision(answers({ needs_weather: 0.97 }));
   assert.equal(decision.intent.type, "task");
   assert.equal(decision.intent.confidence, 0.97);
@@ -320,7 +320,7 @@ test("chat skips irrelevant durable memory, executes approved local tools and ad
   assert.deepEqual(body.tools, ["calculator"]);
   assert.equal(fixture.memoryLoads.length, 0);
   const prompt = fixture.calls.find((call) => call.kind === "groq").body.messages[0].content;
-  assert.match(prompt, /= 4/); assert.match(prompt, /Explain the answer clearly/);
+  assert.match(prompt, /= 4/); assert.match(prompt, /Do not force an explanation or a useful answer/); assert.match(prompt, /ฉันจะไม่บอกเธอหรอก/); assert.doesNotMatch(prompt, /ตอบเนื้อหาให้ครบตามที่ขอ|Explain the answer clearly/);
 });
 
 test("chat executes a semantic time decision even without an existing time regex match", async () => {
@@ -393,11 +393,13 @@ test("fresh greetings request only 120 output tokens across text providers", asy
 
 test("Vivian keeps all voice references in source but only sends the relevant scene", async () => {
   for (const [message, scene, quote] of [
-    ["วันนี้อากาศร้อนจังเลย", 0, "ชานมเย็น"],
-    ["อรุณสวัสดิ์", 1, "เริ่มดี ๆ"],
-    ["วันนี้ชุดน่ารักจัง", 2, "หนูเตรียมใจไม่ทัน"],
-    ["ปวดหัว", 3, "ไม่ต้องฝืน"],
-    ["ขอโทษที่หายไปนาน", 4, "สายหายตัว"],
+    ["2+2 เท่าไหร่", 0, "ฉันจะไม่บอกเธอหรอก"],
+    ["วันนี้อากาศร้อนจังเลย", 1, "ไปดื่มน้ำสิ"],
+    ["อรุณสวัสดิ์", 2, "ฉันไม่ได้รอเธอสักหน่อย"],
+    ["วันนี้ชุดน่ารักจัง", 3, "ไปชมคนอื่นไป"],
+    ["ปวดหัว", 4, "ไปพักก่อน"],
+    ["เมื่อกี้มีคนมาจีบเรา", 5, "โซระจังของฉัน"],
+    ["อธิบาย recursion ให้หน่อย", 6, "ไปงงเองก่อนสิ"],
   ]) {
     const fixture = chatFixture({ values: { needs_current_information: 0.01 } });
     assert.equal((await fixture.post(message)).status, 200);
@@ -408,7 +410,7 @@ test("Vivian keeps all voice references in source but only sends the relevant sc
     assert.ok(reference.includes(quote));
     assert.equal((reference.match(/แบบที่ \d:/g) ?? []).length, 1);
     assert.ok(reference.length < dialogue.VIVIAN_DIALOGUE_EXAMPLE.length * 0.65);
-    assert.ok(reference.includes("โซระจังเป็นชื่อผู้ใช้ในตัวอย่าง"));
+    assert.ok(reference.includes("เรียนรู้พฤติกรรม ไม่ใช่ท่องประโยค"));
   }
 });
 
