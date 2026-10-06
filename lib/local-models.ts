@@ -263,7 +263,7 @@ export async function loadModelPackage(id: string): Promise<ModelPackage | undef
 export function isModelBlobReadError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const { name, message } = error as { name?: string; message?: string };
-  return name === "NotFoundError" || /(?:blob object.*not.*found|requested object.*could not be found)/i.test(message ?? "");
+  return name === "NotFoundError" || name === "NotReadableError" || /(?:blob object.*not.*found|requested object.*could not be found|I\/O read operation failed)/i.test(message ?? "");
 }
 async function checkModelBlobs(pack: ModelPackage, signal?: AbortSignal): Promise<void> {
   // Safari can restore Blob handles whose backing objects were evicted or lost

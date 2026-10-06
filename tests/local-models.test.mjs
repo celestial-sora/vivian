@@ -129,9 +129,15 @@ test('rendering a catalog selection hydrates its manifest and never overwrites o
 
 test('lost Safari Blob backing objects recover once from the cloud without changing model quality', async () => {
   const valid = await inspectPackage(assets(), 'blob-recovery');
-  for (const message of ['Blob object was not found.', 'The requested object could not be found.']) {
+  for (const [name, message] of [
+    ['NotFoundError', 'Blob object was not found.'],
+    ['NotFoundError', 'The requested object could not be found.'],
+    ['NotReadableError', 'The I/O read operation failed.'],
+    ['NotReadableError', 'The file could not be read.'],
+    ['Error', 'The I/O read operation failed.'],
+  ]) {
     class LostBlob extends Blob {
-      slice() { throw new DOMException(message,'NotFoundError'); }
+      slice() { throw new DOMException(message,name); }
     }
     const broken = { ...valid, assets: valid.assets.map((asset,index)=>index===1?{...asset,blob:new LostBlob(['lost'])}:asset) };
     let downloads=0;
@@ -156,4 +162,20 @@ test('missing package recovers but unrelated cache failures do not trigger cloud
   const broken={...valid,assets:[{path:valid.assets[0].path,blob:new BadBlob(['denied'])}]};
   await assert.rejects(hydrateModelPackage(broken,{recover:async()=>{downloads++;return valid;}}),{name:'SecurityError'});
   assert.equal(downloads,1);
+});
+
+test('Safari asynchronous I/O read failures recover once and a broken cloud copy stops retrying', async () => {
+  const valid = await inspectPackage(assets(), 'io-recovery');
+  class UnreadableBlob extends Blob {
+    slice() {
+      return { arrayBuffer: async () => { throw new DOMException('The I/O read operation failed.', 'NotReadableError'); } };
+    }
+  }
+  const broken = { ...valid, assets: valid.assets.map((asset, index) => index === 1 ? { ...asset, blob: new UnreadableBlob(['lost']) } : asset) };
+  let downloads = 0;
+  assert.equal(await hydrateModelPackage(broken, { recover: async () => { downloads++; return valid; } }), valid);
+  assert.equal(downloads, 1);
+  downloads = 0;
+  await assert.rejects(hydrateModelPackage(broken, { recover: async () => { downloads++; return broken; } }), { name: 'NotReadableError' });
+  assert.equal(downloads, 1);
 });
