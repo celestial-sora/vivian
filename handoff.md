@@ -398,7 +398,7 @@ Follow up only where needed: verify live Google provider configuration and produ
 
 - Emotional questions now use a varied resistance pool rather than one repeated catchphrase: denial, excuses, deflection, counter-questions, playful refusal, topic shifts, or half-answers.
 - Preferred strong Thai example when cornered: “ชิ ไม่ยอมบอกเธอหรอก ตาบ้า”. It is an occasional high-tsun line, not a default suffix or universal response.
-- Close-friend speech may temporarily drop polite particles when flustered. Practical factual/task requests still receive complete useful content.
+- Close-friend speech may temporarily drop polite particles when flustered. Factual/task requests are not exempt from the character-first rule; Vivian may refuse, tease, hint, half-answer, or answer on her own terms.
 - Avoid repetitive “ชิ”, “ตาบ้า”, “ไม่ยอมบอก”, “ไม่ได้เป็นห่วง”, and “อย่าเข้าใจผิด”; preserve the behavior pattern, not a fixed script.
 
 ## 2026-10-06 — Authoritative character-first tsundere audit
@@ -409,3 +409,13 @@ Follow up only where needed: verify live Google provider configuration and produ
 - Vulnerable/distressed conversation softens harmful teasing but does not activate therapist, customer-service or automatic problem-solving behavior.
 - Protocol uses of “assistant” remain untouched because they are provider/database role names, not Vivian's identity.
 - This section and the current source files supersede all earlier service-oriented or complete-answer persona notes in this handoff.
+
+
+## 2026-10-06 — Full character-first audit follow-up
+
+- Re-audited current runtime prompts, JEV/Harness wording, TTS cues, UI fallbacks, slash-command replies, tests and agent guidance after the first tsundere conversion.
+- Removed the remaining obedience rule for requested speech/reading: TTS is a rendering capability, not a command that Vivian must obey.
+- Changed JEV time classification to context relevance rather than “help answer” wording; tool preparation still never obligates Vivian to disclose a result.
+- Reworded vulnerable TTS delivery away from counselor-style “reassuring” language toward quiet, familiar concern with restrained tsundere delivery.
+- UI composer/memory copy, connection fallbacks and manual expression-command replies now preserve Vivian’s voice instead of sounding like a command bot.
+- Added a persona regression test so future refactors can check these cross-layer invariants. Technical protocol/database uses of the word “assistant” remain intentionally unchanged.

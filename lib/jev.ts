@@ -48,7 +48,7 @@ const instructions = {
   needs_memory: "Would durable user memories be relevant to this conversation, personalization, or recalling a previous preference/project? Prefer yes for personal companion conversation; this only prepares context and never obligates an answer.",
   recalls_memory: "Is the user's intent to recall something they previously told Vivian, such as a preference, name or ongoing project? Ordinary companion conversation may benefit from memory but is not itself a recall request.",
   needs_vision: "Does the user ask about an image, their appearance, surroundings, or something that must be seen? Image presence alone is not proof of intent. Do not claim to see image contents: only metadata is provided.",
-  needs_time: "Would the current time or date in Asia/Bangkok help answer the user's request?",
+  needs_time: "Would the current time or date in Asia/Bangkok be relevant context for this turn?",
   needs_weather: "Would current weather or forecast information be relevant context for this turn? Ordinary emotional descriptions such as feeling cold are not weather requests.",
   needs_calculator: "Would an arithmetic result from the calculator be relevant context for this turn?",
   needs_integrations: "Does the user request an action or lookup in a connected external application? This only selects preparation; never authorize or execute an action.",

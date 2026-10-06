@@ -13,6 +13,8 @@ test("tsundere denials sound flustered and comfort wins over teasing", () => {
   assert.equal(speechStyle("ไม่ได้เป็นห่วงสักหน่อย").delivery, "flustered");
   assert.equal(speechStyle("ไม่เป็นไร ฉันฟังอยู่ ไม่ได้เป็นห่วงสักหน่อย").delivery, "gentle");
   assert.equal(speechStyle("เล่ามาสิ ฉันฟังอยู่~").delivery, "gentle");
+  assert.match(speechStyle("ไม่เป็นไร ฉันฟังอยู่").cue, /quietly concerned, familiar, restrained/);
+  assert.doesNotMatch(speechStyle("ไม่เป็นไร ฉันฟังอยู่").cue, /reassuring/);
   assert.equal(speechStyle("ทำได้ดีนี่!").delivery, "reserved");
   assert.equal(speechStyle("...ไง มีอะไรเหรอ?").delivery, "reserved");
   assert.equal(speechStyle("โธ่ อย่าแซวสิ").delivery, "teasing");
@@ -23,6 +25,7 @@ test("tsundere denials sound flustered and comfort wins over teasing", () => {
 test("romaji stammers keep every attempted syllable without spelling the letter B", () => {
   const text = speechText("B- B- Baka!");
   assert.equal(text, "Ba… Ba… Baka!");
+  assert.match(speechStyle(text).cue, /flustered, defensive, familiar/);
   assert.match(speechStyle(text).cue, /stammering naturally/);
   assert.equal(speechStyle(text).repetitionPenalty, 1);
   assert.equal(speechStyle("เล่ามาสิ").repetitionPenalty, 1.2);

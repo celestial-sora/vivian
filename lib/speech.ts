@@ -58,10 +58,10 @@ export function speechStyle(value: string): SpeechStyle {
   // Care takes precedence over the proud facade, including comforting replies
   // that end with a tsundere denial. One cue avoids exaggerated acting.
   if (/เศร้า|เสียใจ|ร้องไห้|เหนื่อย|ไม่เป็นไร|ฉันฟังอยู่|อยู่ตรงนี้|พักก่อน|sad|sorry|it's okay|i(?:'m| am) here|take your time|大丈夫|괜찮|没关系/iu.test(value)) {
-    return { delivery: "gentle", cue: hasStammer(value) ? "[gentle, reassuring, stammering naturally, pronounce broken syllables rather than letter names]" : "[gentle, reassuring]", speedAdjustment: -.02, temperature: .60, topP: .70, repetitionPenalty: hasStammer(value) ? 1 : 1.2 };
+    return { delivery: "gentle", cue: hasStammer(value) ? "[quietly concerned, familiar, restrained, trying not to sound overly worried, stammering naturally, pronounce broken syllables rather than letter names]" : "[quietly concerned, familiar, restrained, trying not to sound overly worried]", speedAdjustment: -.02, temperature: .60, topP: .70, repetitionPenalty: hasStammer(value) ? 1 : 1.2 };
   }
   if (hasStammer(value)) {
-    return { delivery: "flustered", cue: "[soft-spoken, bashful, stammering naturally, pronounce broken syllables rather than letter names]", speedAdjustment: -.01, temperature: .64, topP: .72, repetitionPenalty: 1 };
+    return { delivery: "flustered", cue: "[flustered, defensive, familiar, stammering naturally, pronounce broken syllables rather than letter names]", speedAdjustment: -.01, temperature: .64, topP: .72, repetitionPenalty: 1 };
   }
   if (/เขิน|อย่าเข้าใจผิด|ไม่ได้(?:รอ|ชอบ|เป็นห่วง|คิดถึง)|อย่าเพิ่งได้ใจ|อย่าคิดไปเอง|ซะหน่อย|fluster|blush|don't (?:get|misunderstand)|not (?:waiting|like i)|別に|勘違い|照れ|착각|부끄|才不是|别误会/iu.test(value)) {
     return { delivery: "flustered", cue: "[flustered, defensive, trying hard to hide affection, familiar rather than formal]", speedAdjustment: -.01, temperature: .66, topP: .74, repetitionPenalty: 1.2 };

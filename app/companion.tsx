@@ -1097,10 +1097,10 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       console.error("Vivian response unavailable", error);
       resetReaction();
       if (!idle && !visionIdle) {
-        const message = error instanceof Error && error.message.includes("RATE_LIMITED") ? "ส่งถี่เกินไปค่ะ รอสักครู่นะคะ"
-          : error instanceof Error && error.message === "SEARCH_UNAVAILABLE" ? "ตอนนี้ค้นเว็บไม่ได้ค่ะ แต่ยังคุยเรื่องทั่วไปได้นะคะ"
-          : error instanceof Error && error.message === "CHAT_NOT_CONFIGURED" ? "ตอนนี้ระบบแชตยังไม่พร้อมใช้งานค่ะ"
-          : "ตอนนี้เชื่อมต่อไม่สำเร็จ ลองใหม่อีกครั้งนะคะ";
+        const message = error instanceof Error && error.message.includes("RATE_LIMITED") ? "เดี๋ยวสิ ส่งรัวอะไรขนาดนั้น… รอก่อน ตาบ้า"
+          : error instanceof Error && error.message === "SEARCH_UNAVAILABLE" ? "เว็บไม่ยอมเปิดตอนนี้… ชิ อย่ามองฉันสิ ไม่ใช่ความผิดฉันสักหน่อย"
+          : error instanceof Error && error.message === "CHAT_NOT_CONFIGURED" ? "ตอนนี้ฉันคุยต่อไม่ได้… ไม่ใช่ว่าหนีเธอนะ ระบบยังไม่พร้อมต่างหาก"
+          : "เชื่อมต่อหลุดอีกแล้ว… ชิ รอหน่อยสิ เดี๋ยวค่อยว่ากัน";
         setErrorNotice(message);
         setMessages((current) => [...current, historyMessage("vivian", message)]);
       }
@@ -1143,28 +1143,28 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     const argument = match[1]?.trim() ?? "";
     const expressions = (activeModel?.expressions ?? []);
     if (argument.toLowerCase() === "list") {
-      setMessages((current) => [...current, historyMessage("me", text), historyMessage("vivian", `Expression ที่ใช้ได้: ${expressions.join(", ")}`)]);
+      setMessages((current) => [...current, historyMessage("me", text), historyMessage("vivian", `นี่ มีแค่นี้แหละ: ${expressions.join(", ")} จะเลือกอะไรก็เลือกสิ`)]);
       return true;
     }
     if (!argument || argument.toLowerCase() === "default" || argument.toLowerCase() === "reset") {
       resetReaction();
-      setMessages((current) => [...current, historyMessage("me", text), historyMessage("vivian", "กลับไปใช้ expression default แล้วค่ะ")]);
+      setMessages((current) => [...current, historyMessage("me", text), historyMessage("vivian", "กลับหน้าเดิมให้แล้ว… ไม่ได้ทำตามใจเธอหรอกนะ")]);
       return true;
     }
     const expression = expressions.find((item) => item.trim().toLowerCase() === argument.toLowerCase());
     if (!expression) {
-      setMessages((current) => [...current, historyMessage("me", text), historyMessage("vivian", "ไม่พบ expression นี้ค่ะ ลองใช้ /expression list เพื่อดูรายการ")]);
+      setMessages((current) => [...current, historyMessage("me", text), historyMessage("vivian", "ไม่มี expression ชื่อนั้นหรอก ตาบ้า ไปดู /expression list เองสิ")]);
       return true;
     }
     try {
       if (!modelRef.current) throw new Error("Live2D model is not ready");
       await modelRef.current.expression(expression);
       setActiveExpression(expression);
-      setMessages((current) => [...current, historyMessage("me", text), historyMessage("vivian", `เปลี่ยนเป็น expression ${expression.trim()} แล้วค่ะ`)]);
+      setMessages((current) => [...current, historyMessage("me", text), historyMessage("vivian", `เปลี่ยนเป็น ${expression.trim()} แล้ว… พอใจหรือยัง?`)]);
     } catch (error) {
       console.warn("Manual Live2D expression unavailable", error);
       resetReaction();
-      setMessages((current) => [...current, historyMessage("me", text), historyMessage("vivian", "ยังเปลี่ยน expression ไม่ได้ค่ะ โมเดลกำลังโหลดอยู่")]);
+      setMessages((current) => [...current, historyMessage("me", text), historyMessage("vivian", "ยังเปลี่ยนไม่ได้ โมเดลยังไม่ตื่น… จะรีบอะไรนักหนา")]);
     }
     return true;
   }
@@ -1677,7 +1677,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         <button className={`circle-control ${cameraActive ? "is-active is-camera-active" : ""}`} type="button" onClick={toggleCamera} aria-pressed={cameraActive} aria-label={cameraActive ? "ปิดกล้อง Live" : "เปิดกล้อง Live"}><Icon name="video"/></button>
         <button className={`circle-control ${attachedImage ? "is-active" : ""}`} type="button" onClick={() => fileInputRef.current?.click()} aria-label="แนบรูปภาพ"><Icon name="clip"/></button>
         <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleImageUpload} tabIndex={-1} />
-        <input value={message} onChange={(event) => setMessage(event.target.value)} placeholder={recording ? "กำลังฟัง... กดไมค์เพื่อ Mute" : cameraActive ? "กล้อง Live กำลังทำงาน... พิมพ์คุยได้" : "Ask Vivian"} aria-label="ข้อความถึง Vivian" />
+        <input value={message} onChange={(event) => setMessage(event.target.value)} placeholder={recording ? "กำลังฟัง... กดไมค์เพื่อ Mute" : cameraActive ? "กล้อง Live กำลังทำงาน... พิมพ์คุยได้" : "Talk to Vivian"} aria-label="ข้อความถึง Vivian" />
         <button className="send-text" type="submit" disabled={sending || !history.ready || (!message.trim() && !attachedImage)} aria-label="ส่งข้อความ"><Icon name="send" size={22}/></button>
         <button className="text-send" type="button" onClick={() => openPanel("conversations")}><Icon name="message" size={23}/><span>Chat</span></button>
       </form>
@@ -1702,7 +1702,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
             </>}
             {panel === "memories" && <>
               <div className="bond-panel"><p><strong>Daily check-in</strong> {streak} days together</p><p><strong>Mood</strong>{moodLabel(companion.mood)}</p>{[["Affinity", companion.affinity], ["Trust", companion.trust], ["Familiarity", companion.familiarity]].map(([label, value]) => <div key={String(label)}><span>{label}</span><i><b style={{ width: `${value}%` }}/></i><em>{value}</em></div>)}</div>
-              <div className="memory-list">{memories.length ? memories.map((memory) => <article key={memory.id}><Icon name="memory" size={18}/>{editingMemoryId === memory.id ? <div className="memory-edit"><textarea value={memoryDraft} maxLength={500} onChange={(event) => setMemoryDraft(event.target.value)}/><div><button type="button" onClick={() => void saveMemory(memory)}>Save</button><button type="button" onClick={() => setEditingMemoryId(null)}>Cancel</button></div></div> : <><p><strong>{memory.category}</strong>{memory.memory}</p><button type="button" className="memory-edit-button" onClick={() => { setEditingMemoryId(memory.id); setMemoryDraft(memory.memory); }}>Edit</button></>}</article>) : <p className="floating-empty">Vivian will remember the important things you share.</p>}</div>
+              <div className="memory-list">{memories.length ? memories.map((memory) => <article key={memory.id}><Icon name="memory" size={18}/>{editingMemoryId === memory.id ? <div className="memory-edit"><textarea value={memoryDraft} maxLength={500} onChange={(event) => setMemoryDraft(event.target.value)}/><div><button type="button" onClick={() => void saveMemory(memory)}>Save</button><button type="button" onClick={() => setEditingMemoryId(null)}>Cancel</button></div></div> : <><p><strong>{memory.category}</strong>{memory.memory}</p><button type="button" className="memory-edit-button" onClick={() => { setEditingMemoryId(memory.id); setMemoryDraft(memory.memory); }}>Edit</button></>}</article>) : <p className="floating-empty">Nothing has caught Vivian&apos;s attention yet.</p>}</div>
             </>}
             {panel === "character" && <>
               <div className="floating-tabs">{(["outfit", "expression", "pose"] as const).map((tab) => <button key={tab} type="button" className={characterTab === tab ? "is-selected" : ""} onClick={() => setCharacterTab(tab)}>{tab === "outfit" ? "Models" : tab}</button>)}</div>
