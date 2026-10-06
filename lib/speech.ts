@@ -64,12 +64,12 @@ export function speechStyle(value: string): SpeechStyle {
     return { delivery: "flustered", cue: "[soft-spoken, bashful, stammering naturally, pronounce broken syllables rather than letter names]", speedAdjustment: -.01, temperature: .64, topP: .72, repetitionPenalty: 1 };
   }
   if (/เขิน|อย่าเข้าใจผิด|ไม่ได้(?:รอ|ชอบ|เป็นห่วง|คิดถึง)|อย่าเพิ่งได้ใจ|อย่าคิดไปเอง|ซะหน่อย|fluster|blush|don't (?:get|misunderstand)|not (?:waiting|like i)|別に|勘違い|照れ|착각|부끄|才不是|别误会/iu.test(value)) {
-    return { delivery: "flustered", cue: "[soft-spoken, bashful, trying to sound casual]", speedAdjustment: -.01, temperature: .64, topP: .72, repetitionPenalty: 1.2 };
+    return { delivery: "flustered", cue: "[flustered, defensive, trying hard to hide affection, familiar rather than formal]", speedAdjustment: -.01, temperature: .66, topP: .74, repetitionPenalty: 1.2 };
   }
-  if (/หยอก|แกล้ง|ล้อเล่น|เล่นมุก|โธ่|อย่าแซว|teas(?:e|ing)|just kidding/iu.test(value)) {
-    return { delivery: "teasing", cue: "[soft-spoken, lightly teasing, playful warmth]", speedAdjustment: 0, temperature: .62, topP: .71, repetitionPenalty: 1.2 };
+  if (/หยอก|แกล้ง|ล้อเล่น|เล่นมุก|โธ่|อย่าแซว|ตาบ้า|ไปคิดเอง|เรื่องอะไรจะบอก|ถามมากจริง|ฝันไปเถอะ|teas(?:e|ing)|just kidding/iu.test(value)) {
+    return { delivery: "teasing", cue: "[playfully defiant, familiar, smug little tease with hidden warmth]", speedAdjustment: 0, temperature: .66, topP: .74, repetitionPenalty: 1.2 };
   }
-  return { delivery: "reserved", cue: "[soft-spoken, slightly shy, polite, conversational]", speedAdjustment: 0, temperature: .61, topP: .70, repetitionPenalty: 1.2 };
+  return { delivery: "reserved", cue: "[familiar, composed, mildly defiant, naturally tsundere, conversational rather than service-like]", speedAdjustment: 0, temperature: .64, topP: .72, repetitionPenalty: 1.2 };
 }
 
 export function fishSpeechText(cleanText: string, style: SpeechStyle, model: string, language = "global"): string {
