@@ -260,8 +260,42 @@ export async function loadModelPackage(id: string): Promise<ModelPackage | undef
   // when hydrating one package rather than trusting stale cached model metadata.
   return { ...await inspectPackage(pack.assets, pack.id), ...(pack.cloudOwner ? { cloudOwner: pack.cloudOwner } : {}) };
 }
-export async function hydrateModelPackage(pack: ModelPackage): Promise<ModelPackage | undefined> {
-  return pack.assets.length ? pack : loadModelPackage(pack.id);
+export function isModelBlobReadError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { name, message } = error as { name?: string; message?: string };
+  return name === "NotFoundError" || /(?:blob object.*not.*found|requested object.*could not be found)/i.test(message ?? "");
+}
+async function checkModelBlobs(pack: ModelPackage, signal?: AbortSignal): Promise<void> {
+  // Safari can restore Blob handles whose backing objects were evicted or lost
+  // in a WebContent crash. Probe bounded slices before creating runtime URLs.
+  for (const asset of pack.assets) {
+    signal?.throwIfAborted();
+    if (asset.blob.size) await asset.blob.slice(0, 1).arrayBuffer();
+  }
+  signal?.throwIfAborted();
+}
+export async function hydrateModelPackage(pack: ModelPackage, options?: { recover?: () => Promise<ModelPackage>; signal?: AbortSignal }): Promise<ModelPackage | undefined> {
+  let source: ModelPackage | undefined;
+  let cacheError: unknown;
+  try {
+    options?.signal?.throwIfAborted();
+    source = pack.assets.length ? pack : await loadModelPackage(pack.id);
+    if (source) await checkModelBlobs(source, options?.signal);
+  } catch (error) {
+    if (!isModelBlobReadError(error)) throw error;
+    cacheError = error;
+    source = undefined;
+  }
+  if (source) return source;
+  if (options?.recover) {
+    options.signal?.throwIfAborted();
+    // Exactly one authorized cloud recovery; don't repeatedly read a broken cache.
+    const recovered = await options.recover();
+    await checkModelBlobs(recovered, options.signal);
+    return recovered;
+  }
+  if (cacheError) throw new Error("Saved model files could not be read on this device. Import the original model again or reconnect to its cloud copy.", { cause: cacheError });
+  return undefined;
 }
 export const saveModelPackage = (pack: ModelPackage): Promise<IDBValidKey> => {
   if (!pack.assets.length || pack.models.some((model) => !pack.assets.some((asset) => asset.path === model.manifestPath))) return Promise.reject(new Error("Cannot save a model catalog entry without its original model files."));

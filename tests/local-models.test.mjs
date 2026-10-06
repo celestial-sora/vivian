@@ -126,3 +126,34 @@ test('rendering a catalog selection hydrates its manifest and never overwrites o
   await removeModelPackage(pack.id);
   assert.equal(await hydrateModelPackage(entry),undefined);
 });
+
+test('lost Safari Blob backing objects recover once from the cloud without changing model quality', async () => {
+  const valid = await inspectPackage(assets(), 'blob-recovery');
+  for (const message of ['Blob object was not found.', 'The requested object could not be found.']) {
+    class LostBlob extends Blob {
+      slice() { throw new DOMException(message,'NotFoundError'); }
+    }
+    const broken = { ...valid, assets: valid.assets.map((asset,index)=>index===1?{...asset,blob:new LostBlob(['lost'])}:asset) };
+    let downloads=0;
+    const restored=await hydrateModelPackage(broken,{recover:async()=>{downloads++;return valid;}});
+    assert.equal(restored,valid); assert.equal(downloads,1);
+    assert.deepEqual(restored.models,valid.models);
+    assert.equal(await restored.assets[1].blob.text(),'test');
+    await assert.rejects(hydrateModelPackage(broken),/Saved model files could not be read/);
+    const controller=new AbortController();controller.abort();
+    await assert.rejects(hydrateModelPackage(broken,{signal:controller.signal,recover:async()=>{downloads++;return valid;}}),{name:'AbortError'});
+    assert.equal(downloads,1);
+    await assert.rejects(hydrateModelPackage(broken,{recover:async()=>{throw new Error('Cloud unavailable');}}),/Cloud unavailable/);
+  }
+});
+
+test('missing package recovers but unrelated cache failures do not trigger cloud retries', async () => {
+  const valid=await inspectPackage(assets(),'missing-recovery');
+  let downloads=0;
+  assert.equal(await hydrateModelPackage(modelCatalogEntry(valid),{recover:async()=>{downloads++;return valid;}}),valid);
+  assert.equal(downloads,1);
+  class BadBlob extends Blob { slice() { throw new DOMException('Denied','SecurityError'); } }
+  const broken={...valid,assets:[{path:valid.assets[0].path,blob:new BadBlob(['denied'])}]};
+  await assert.rejects(hydrateModelPackage(broken,{recover:async()=>{downloads++;return valid;}}),{name:'SecurityError'});
+  assert.equal(downloads,1);
+});

@@ -9,13 +9,25 @@ import { historyMessage, HISTORY_CACHE_KEY, type HistoryMessage, type HistoryCon
 import { authFetch } from "@/lib/auth/fetch";
 import { decayCompanionState, type CompanionState, defaultCompanionState, normalizeMood, moodLabel, type Mood } from "@/lib/companion";
 import { MODEL_CONFIG, type ModelKey } from "@/lib/models";
-import { createModelResources, importModelFiles, loadModelCatalog, loadModelPackage, hydrateModelPackage, modelCatalogEntry, removeModelPackage, saveModelPackage, type ModelPackage, type ModelMotion } from "@/lib/local-models";
+import { createModelResources, importModelFiles, loadModelCatalog, hydrateModelPackage, modelCatalogEntry, removeModelPackage, saveModelPackage, type ModelPackage, type ModelMotion } from "@/lib/local-models";
 import { getCloudModels, cloudModelPlaceholder, uploadCloudModel, downloadCloudModel, deleteCloudModel, type CloudLibrary } from "@/lib/cloud-models";
 import { useSceneLibrary } from "@/lib/use-scene-library";
 import { SceneManager } from "@/app/components/scene-manager";
 import { SceneBackground } from "@/app/components/scene-background";
 import { StorageStatusPanel } from "@/app/components/storage-status";
 import type { SceneDecision } from "@/lib/scenes";
+
+async function availableModelPackage(pack: ModelPackage, cloud: CloudLibrary | null, signal?: AbortSignal): Promise<ModelPackage | undefined> {
+  const remote = cloud?.models.find((model) => model.id === pack.id);
+  return hydrateModelPackage(pack, {
+    signal,
+    recover: remote && cloud ? async () => {
+      const downloaded = await downloadCloudModel(remote, cloud.userId, signal);
+      await saveModelPackage(downloaded).catch(() => {});
+      return downloaded;
+    } : undefined,
+  });
+}
 
 type IconName = "config" | "info" | "wardrobe" | "chevron" | "mic" | "micOff" | "video" | "clip" | "message" | "send" | "close" | "memory" | "sound" | "language" | "status" | "scene" | "plus" | "search" | "sun" | "moon";
 
@@ -251,15 +263,13 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       const pack = packages.find((entry) => entry.models.some((model) => model.id === selected));
       if (pack && !pack.assets.length && !interrupted) {
         try {
-          const cached = await loadModelPackage(pack.id);
-          const remoteModel = cloud?.models.find((model) => model.id === pack.id);
-          const downloaded = cached ?? (remoteModel && cloud ? await downloadCloudModel(remoteModel, cloud.userId, controller.signal) : undefined);
+          const downloaded = await availableModelPackage(pack, cloud, controller.signal);
           if (!downloaded) throw new Error("Model files are unavailable.");
           if (cancelled) return;
           packages.splice(packages.indexOf(pack), 1, downloaded);
           setModelPackages([...packages]);
           await saveModelPackage(downloaded).catch(() => {});
-        } catch { if (!cancelled) setModelNotice("Could not load the cloud model. Select it again to retry."); return; }
+        } catch (error) { if (!cancelled) setModelNotice(error instanceof Error ? error.message : "Could not load the cloud model. Select it again to retry."); return; }
       }
       if (!cancelled) setActiveModelId(selected);
     })().catch(() => {
@@ -327,9 +337,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     if (!pack.assets.length) {
       setModelImporting(true); setModelNotice("Loading model from private cloud storage…");
       try {
-        const cached = await loadModelPackage(pack.id);
-        const remoteModel = cloudLibrary?.models.find((model) => model.id === pack.id);
-        const downloaded = cached ?? (remoteModel && cloudLibrary ? await downloadCloudModel(remoteModel, cloudLibrary.userId) : undefined);
+        const downloaded = await availableModelPackage(pack, cloudLibrary);
         if (!downloaded) throw new Error("Model files are unavailable.");
         await saveModelPackage(downloaded).catch(() => {});
         setModelPackages((current) => current.map((entry) => entry.id === pack.id ? downloaded : modelCatalogEntry(entry)));
@@ -566,16 +574,16 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         const mobileDevice = isAppleMobile || /Android|Mobile/i.test(navigator.userAgent);
         // Catalog entries deliberately have no assets. Every path into this
         // effect (refresh, deletion, retry or selection) must hydrate first.
-        let renderPackage = await hydrateModelPackage(activePackage);
-        if (!renderPackage) {
-          const remoteModel = cloudLibrary?.models.find((entry) => entry.id === activePackage.id);
-          if (remoteModel && cloudLibrary) {
-            renderPackage = await downloadCloudModel(remoteModel, cloudLibrary.userId, textureAbort.signal);
-            await saveModelPackage(renderPackage).catch(() => {});
-          }
-        }
+        const renderPackage = await availableModelPackage(activePackage, cloudLibrary, textureAbort.signal);
         textureAbort.signal.throwIfAborted();
         if (!renderPackage) throw new Error("Model files are unavailable on this device. Download the cloud copy or import the original model again.");
+        if (renderPackage !== activePackage) {
+          // Replace stale Blob handles in React too; otherwise every quality
+          // change would try the broken in-memory copy and download again.
+          setModelPackages((current) => current.map((entry) => entry.id === renderPackage.id ? renderPackage : entry));
+          setModelNotice(null);
+          return;
+        }
         const renderModel = renderPackage.models.find((entry) => entry.id === activeModel.id || entry.manifestPath === activeModel.manifestPath);
         if (!renderModel) throw new Error("Model selection has changed. Please select the model again.");
         const resources = await createModelResources(renderPackage, renderModel, {
