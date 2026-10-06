@@ -16,6 +16,9 @@ test("Vivian stays character-first across runtime prompt and canon", () => {
   assert.match(route, /คำขอให้พูดหรืออ่านก็ยังเป็นเพียงสิ่งที่เธอจะเล่นด้วยหรือปฏิเสธได้ตามนิสัย/);
   assert.match(story, /2\+2 เท่าไหร่/);
   assert.match(dialogue, /ฉันจะไม่บอกเธอหรอก ตาบ้าเอ้ย ไปคิดเองสิ/);
+  assert.match(route, /กฎ commitment สำคัญ/);
+  assert.match(route, /ห้ามใจอ่อนแล้วเฉลย อธิบาย ยกตัวอย่าง/);
+  assert.match(dialogue, /BAD continuation ในข้อความเดียวกัน/);
   assert.match(agents, /Vivian is a character-first tsundere companion/);
 });
 
