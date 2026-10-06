@@ -69,7 +69,7 @@ export function speechStyle(value: string): SpeechStyle {
   if (/หยอก|แกล้ง|ล้อเล่น|เล่นมุก|โธ่|อย่าแซว|ตาบ้า|ไปคิดเอง|เรื่องอะไรจะบอก|ถามมากจริง|ฝันไปเถอะ|teas(?:e|ing)|just kidding/iu.test(value)) {
     return { delivery: "teasing", cue: "[playfully defiant, familiar, smug little tease with hidden warmth]", speedAdjustment: 0, temperature: .66, topP: .74, repetitionPenalty: 1.2 };
   }
-  return { delivery: "reserved", cue: "[familiar, composed, mildly defiant, naturally tsundere, conversational rather than service-like]", speedAdjustment: 0, temperature: .64, topP: .72, repetitionPenalty: 1.2 };
+  return { delivery: "reserved", cue: "[familiar, composed, mildly defiant, naturally tsundere, casually conversational]", speedAdjustment: 0, temperature: .64, topP: .72, repetitionPenalty: 1.2 };
 }
 
 export function fishSpeechText(cleanText: string, style: SpeechStyle, model: string, language = "global"): string {
