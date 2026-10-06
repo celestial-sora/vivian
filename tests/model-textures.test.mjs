@@ -30,6 +30,7 @@ test('GPU limits and memory budgets both apply, including nonsquare atlases', ()
 });
 test('compatible 4K textures keep original dimensions and original quality respects the GPU limit', () => {
   const size = {width:4096,height:4096};
+  assert.deepEqual(planTextures([size], {maxDimension:4096,budgetBytes:64*MB})[0].render,size);
   assert.deepEqual(planTextures([size,size], {maxDimension:8192,budgetBytes:128*MB}).map((item)=>item.render),[size,size]);
   assert.equal(planTextures([size], {maxDimension:8192,budgetBytes:128*MB,original:true})[0].render.width,4096);
   assert.throws(()=>planTextures([{width:16384,height:16384}], {maxDimension:16384,budgetBytes:128*MB,original:true}), /graphics memory budget/);

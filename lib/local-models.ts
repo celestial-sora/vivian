@@ -253,11 +253,23 @@ export async function loadModelPackages(): Promise<ModelPackage[]> {
   return Promise.all(packages.map(async (pack) => ({ ...await inspectPackage(pack.assets, pack.id), ...(pack.cloudOwner ? { cloudOwner: pack.cloudOwner } : {}) })));
 }
 export const loadModelCatalog = (): Promise<ModelPackage[]> => storage("readonly", (store) => store.getAll(), "catalog");
-export const loadModelPackage = (id: string): Promise<ModelPackage | undefined> => storage("readonly", (store) => store.get(id));
-export const saveModelPackage = (pack: ModelPackage): Promise<IDBValidKey> => storage("readwrite", (store) => {
-  store.transaction.objectStore("catalog").put(modelCatalogEntry(pack));
-  return store.put(pack);
-});
+export async function loadModelPackage(id: string): Promise<ModelPackage | undefined> {
+  const pack = await storage<ModelPackage | undefined>("readonly", (store) => store.get(id));
+  if (!pack?.assets.length) return undefined;
+  // Older caches were re-inspected by loadModelPackages. Retain that normalization
+  // when hydrating one package rather than trusting stale cached model metadata.
+  return { ...await inspectPackage(pack.assets, pack.id), ...(pack.cloudOwner ? { cloudOwner: pack.cloudOwner } : {}) };
+}
+export async function hydrateModelPackage(pack: ModelPackage): Promise<ModelPackage | undefined> {
+  return pack.assets.length ? pack : loadModelPackage(pack.id);
+}
+export const saveModelPackage = (pack: ModelPackage): Promise<IDBValidKey> => {
+  if (!pack.assets.length || pack.models.some((model) => !pack.assets.some((asset) => asset.path === model.manifestPath))) return Promise.reject(new Error("Cannot save a model catalog entry without its original model files."));
+  return storage("readwrite", (store) => {
+    store.transaction.objectStore("catalog").put(modelCatalogEntry(pack));
+    return store.put(pack);
+  });
+};
 export const removeModelPackage = (id: string): Promise<undefined> => storage("readwrite", (store) => {
   store.transaction.objectStore("catalog").delete(id);
   return store.delete(id);

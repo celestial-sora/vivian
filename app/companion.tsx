@@ -9,7 +9,7 @@ import { historyMessage, HISTORY_CACHE_KEY, type HistoryMessage, type HistoryCon
 import { authFetch } from "@/lib/auth/fetch";
 import { decayCompanionState, type CompanionState, defaultCompanionState, normalizeMood, moodLabel, type Mood } from "@/lib/companion";
 import { MODEL_CONFIG, type ModelKey } from "@/lib/models";
-import { createModelResources, importModelFiles, loadModelCatalog, loadModelPackage, modelCatalogEntry, removeModelPackage, saveModelPackage, type ModelPackage, type ModelMotion } from "@/lib/local-models";
+import { createModelResources, importModelFiles, loadModelCatalog, loadModelPackage, hydrateModelPackage, modelCatalogEntry, removeModelPackage, saveModelPackage, type ModelPackage, type ModelMotion } from "@/lib/local-models";
 import { getCloudModels, cloudModelPlaceholder, uploadCloudModel, downloadCloudModel, deleteCloudModel, type CloudLibrary } from "@/lib/cloud-models";
 import { useSceneLibrary } from "@/lib/use-scene-library";
 import { SceneManager } from "@/app/components/scene-manager";
@@ -564,11 +564,25 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         const maxTextureSize = app.renderer.gl.getParameter(app.renderer.gl.MAX_TEXTURE_SIZE) as number;
         canvasRef.current.dataset.gpuTextureLimit = String(maxTextureSize);
         const mobileDevice = isAppleMobile || /Android|Mobile/i.test(navigator.userAgent);
-        const resources = await createModelResources(activePackage, activeModel, {
+        // Catalog entries deliberately have no assets. Every path into this
+        // effect (refresh, deletion, retry or selection) must hydrate first.
+        let renderPackage = await hydrateModelPackage(activePackage);
+        if (!renderPackage) {
+          const remoteModel = cloudLibrary?.models.find((entry) => entry.id === activePackage.id);
+          if (remoteModel && cloudLibrary) {
+            renderPackage = await downloadCloudModel(remoteModel, cloudLibrary.userId, textureAbort.signal);
+            await saveModelPackage(renderPackage).catch(() => {});
+          }
+        }
+        textureAbort.signal.throwIfAborted();
+        if (!renderPackage) throw new Error("Model files are unavailable on this device. Download the cloud copy or import the original model again.");
+        const renderModel = renderPackage.models.find((entry) => entry.id === activeModel.id || entry.manifestPath === activeModel.manifestPath);
+        if (!renderModel) throw new Error("Model selection has changed. Please select the model again.");
+        const resources = await createModelResources(renderPackage, renderModel, {
           // GPU limits alone do not account for framebuffers, decoded images,
           // Cubism masks and the rest of the page. Leave room for those too.
-          maxDimension: textureQuality === "original" ? Math.min(maxTextureSize, mobileDevice ? 4096 : 8192) : Math.min(maxTextureSize, mobileDevice ? 2048 : 4096),
-          budgetBytes: (mobileDevice ? 32 : 128) * 1024 * 1024,
+          maxDimension: textureQuality === "original" ? Math.min(maxTextureSize, mobileDevice ? 4096 : 8192) : Math.min(maxTextureSize, 4096),
+          budgetBytes: (mobileDevice ? 64 : 128) * 1024 * 1024,
           original: textureQuality === "original",
           signal: textureAbort.signal,
         });
@@ -695,7 +709,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       }
       releaseResources?.();
     };
-  }, [preferencesReady, modelsReady, activeModel, activePackage, textureQuality, modelReload, graphicsLost, modelPaused]);
+  }, [preferencesReady, modelsReady, activeModel, activePackage, textureQuality, modelReload, graphicsLost, modelPaused, cloudLibrary?.userId]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

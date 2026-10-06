@@ -30,15 +30,21 @@ test('streaming PNG copy reconstructs all five filters and preserves RGBA/alpha'
   const pieces = Array.from(compressed, (value) => new Uint8Array([value]));
   const full = await downsamplePng(png(4,5,pieces),4,5);
   assert.deepEqual([...full], rows.flatMap((row)=>[...row]));
-  const small = await downsamplePng(png(4,5,pieces),2,2);
-  assert.deepEqual([...small], [...rows[0].slice(0,4),...rows[0].slice(8,12),...rows[2].slice(0,4),...rows[2].slice(8,12)]);
 });
 test('palette transparency, grayscale, grayscale alpha and RGB transparency are preserved', async () => {
   const decode = (color, bytes, extra=[])=>downsamplePng(png(2,1,[zlibSync(new Uint8Array([0,...bytes]))],color,extra),2,1);
-  assert.deepEqual([...await decode(3,[0,1],[chunk('PLTE',new Uint8Array([255,0,0,0,255,0])),chunk('tRNS',new Uint8Array([0,128]))])],[255,0,0,0,0,255,0,128]);
+  assert.deepEqual([...await decode(3,[0,1],[chunk('PLTE',new Uint8Array([255,0,0,0,255,0])),chunk('tRNS',new Uint8Array([0,128]))])],[0,0,0,0,0,255,0,128]);
   assert.deepEqual([...await decode(0,[12,34])],[12,12,12,255,34,34,34,255]);
   assert.deepEqual([...await decode(4,[12,99,34,123])],[12,12,12,99,34,34,34,123]);
-  assert.deepEqual([...await decode(2,[1,2,3,4,5,6],[chunk('tRNS',new Uint8Array([0,1,0,2,0,3]))])],[1,2,3,0,4,5,6,255]);
+  assert.deepEqual([...await decode(2,[1,2,3,4,5,6],[chunk('tRNS',new Uint8Array([0,1,0,2,0,3]))])],[0,0,0,0,4,5,6,255]);
+});
+test('area filtering preserves thin features and smooths alternating edges instead of skipping pixels', async () => {
+  const image=png(2,2,[zlibSync(new Uint8Array([0,0,0,0,255,255,255,255,255,0,255,255,255,255,0,0,0,255]))]);
+  assert.deepEqual([...await downsamplePng(image,1,1)],[128,128,128,255]);
+  const transparent=png(2,1,[zlibSync(new Uint8Array([0,255,0,0,0,255,255,255,255]))]);
+  assert.deepEqual([...await downsamplePng(transparent,1,1)],[255,255,255,128]);
+  const fractional=png(3,1,[zlibSync(new Uint8Array([0,0,0,0,255,120,120,120,255,240,240,240,255]))]);
+  assert.deepEqual([...await downsamplePng(fractional,2,1)],[40,40,40,255,200,200,200,255]);
 });
 test('large compressed atlas uses scanline-sized source buffers and a small render result', async () => {
   const chunks=[]; const encoder=new Zlib((bytes)=>chunks.push(bytes.slice()));

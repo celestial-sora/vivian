@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { zipSync, strToU8 } from 'fflate';
-import { inspectPackage, importModelFiles, createModelResources, normalizePath, resolveAsset, loadModelPackages, loadModelCatalog, loadModelPackage, saveModelPackage, removeModelPackage } from '../lib/local-models.ts';
+import { inspectPackage, importModelFiles, createModelResources, normalizePath, resolveAsset, loadModelPackages, loadModelCatalog, loadModelPackage, hydrateModelPackage, modelCatalogEntry, saveModelPackage, removeModelPackage } from '../lib/local-models.ts';
 
 const manifest = () => ({ Version: 3, FileReferences: { Moc: 'avatar.moc3', Textures: ['textures/tex.png'], Physics: 'physics.json', Pose: 'pose.json', Expressions: [{ Name: 'Happy', File: 'expressions/happy.exp3.json' }, { Name: 'เศร้า #', File: 'expressions/เศร้า #.exp3.json' }], Motions: { Idle: [{ File: 'motions/idle.motion3.json' }], Wave: [{ File: 'motions/wave.motion3.json', Sound: 'hello.wav' }] } } });
 const asset = (path, content = 'test') => ({ path, blob: new Blob([content]) });
@@ -109,4 +109,20 @@ test('version-one caches migrate to a metadata catalog while preserving original
     const hydrated=await loadModelPackage(pack.id);
     assert.equal(await hydrated.assets[0].blob.text(),await pack.assets[0].blob.text());
   } finally { globalThis.indexedDB=original; }
+});
+
+test('rendering a catalog selection hydrates its manifest and never overwrites originals with metadata', async () => {
+  const pack = await inspectPackage(assets(), 'selection');
+  await saveModelPackage(pack);
+  const entry = modelCatalogEntry(pack);
+  assert.equal(entry.assets.length,0);
+  await assert.rejects(createModelResources(entry,entry.models[0]),/manifest is missing/);
+  const hydrated = await hydrateModelPackage(entry);
+  const resources = await createModelResources(hydrated,hydrated.models[0]);
+  assert.equal(await (await fetch(resources.resolve('avatar.moc3'))).text(),'test');
+  resources.dispose();
+  await assert.rejects(saveModelPackage(entry),/without its original/);
+  assert.ok((await loadModelPackage(pack.id)).assets.length>0);
+  await removeModelPackage(pack.id);
+  assert.equal(await hydrateModelPackage(entry),undefined);
 });
