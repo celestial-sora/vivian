@@ -74,6 +74,7 @@ test("supported tool decisions add only known tools and cannot veto regex tools"
   assert.ok(plan(context("calculate 2 + 2"), { needs_calculator: 0 }).localTools.includes("calculator"));
   assert.equal(plan(context("hi"), { needs_integrations: 0.1 }).prepareIntegrations, false);
   assert.equal(plan(context("send on discord", { toolkitCandidates: ["discord"] }), { needs_integrations: 0 }).prepareIntegrations, true);
+  assert.equal(plan(context("send on discord", { capabilities: { search: true, integrations: false }, toolkitCandidates: ["discord"] }), { needs_integrations: 1 }).prepareIntegrations, false);
 });
 
 test("vision cannot discard an image or invent visual evidence", () => {
@@ -222,8 +223,8 @@ for (const phase of ["headers", "body"]) {
 // Exercise the actual chat route, JEV client, parser and plan; mock only auth,
 // persistence and upstream services. Never send test messages to cloud memory.
 function chatFixture({ values, jevFetch, env = {}, denied = null, groqReply, cerebrasReply, timeout = 2000, sceneContext = null, sceneFailure = false, sceneExecutionFailure = false } = {}) {
-  const calls = [], executions = [], background = [], memoryLoads = [];
-  const providerEnv = { TYPESAFE_API_KEY: "fixture-jev", GROQ_API_KEY: "fixture-groq", GEMINI_API_KEY: "fixture-gemini", COMPOSIO_API_KEY: "fixture-composio", SUPABASE_URL: "fixture-db", SUPABASE_SERVICE_ROLE_KEY: "fixture-admin", ...env };
+  const calls = [], background = [], memoryLoads = [];
+  const providerEnv = { TYPESAFE_API_KEY: "fixture-jev", GROQ_API_KEY: "fixture-groq", GEMINI_API_KEY: "fixture-gemini", SUPABASE_URL: "fixture-db", SUPABASE_SERVICE_ROLE_KEY: "fixture-admin", ...env };
   const fixtureJev = client(async (url, options) => {
     calls.push({ kind: "jev", body: JSON.parse(options.body) });
     return jevFetch ? jevFetch(url, options) : Response.json(answers(values));
@@ -251,14 +252,8 @@ function chatFixture({ values, jevFetch, env = {}, denied = null, groqReply, cer
     "@/lib/tools": fixtureTools,
     "@/lib/jev": fixtureJev,
     "@/lib/chat-decision": fixturePlan,
-    "@/lib/composio": {
-      detectToolkits: (message) => /discord/i.test(message) ? ["discord"] : [],
-      getComposioConnectedAccounts: async () => { calls.push({ kind: "accounts" }); return []; },
-      getComposioTools: async () => [{ slug: "DISCORD_SEND", name: "Send", parameters: { type: "object", properties: {} } }],
-      composioToolsToFunctions: (items) => items.map((item) => ({ type: "function", function: { name: item.slug } })),
-      executeComposioTool: async (call) => { executions.push(call); return { content: "sent" }; },
-      composioResultsBlock: () => "",
-    },
+    "@/lib/chat-history": load("../lib/chat-history.ts", {}, { crypto: require("node:crypto").webcrypto }),
+    "@/lib/chat-history-store": { saveHistory: async () => { calls.push({ kind: "history" }); } },
     "next/server": { ...require("next/server"), after: (callback) => background.push(callback) },
   };
   const route = load("../app/api/chat/route.ts", imports, {
@@ -271,7 +266,7 @@ function chatFixture({ values, jevFetch, env = {}, denied = null, groqReply, cer
       assert.fail(`Unexpected service request: ${url}`);
     },
   });
-  return { calls, executions, background, memoryLoads, async post(message = "Hello Vivian", extra = {}) {
+  return { calls, background, memoryLoads, async post(message = "Hello Vivian", extra = {}) {
     return route.POST(new Request("https://vivian.example/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ role: "user", content: message }], ...extra }) }));
   } };
 }
@@ -288,7 +283,6 @@ test("chat integrates a single JEV pass; state starts in parallel; main LLM stil
   assert.ok(prompt.includes(dialogue.vivianDialoguePrompt("Hello Vivian")));
   assert.equal(prompt.includes(dialogue.VIVIAN_DIALOGUE_EXAMPLE), false);
   assert.equal(fixture.background.length, 1);
-  assert.equal(fixture.executions.length, 0);
 });
 
 test("chat fresh request uses Gemini search; explicit search survives low JEV confidence", async () => {
@@ -363,7 +357,7 @@ for (const [label, options] of [
       assert.equal(response.status, 200);
       assert.equal((await response.json()).text, "Vivian fixture reply");
       assert.equal(fixture.memoryLoads.length, 1);
-      assert.equal(fixture.calls.filter((call) => call.kind === "accounts").length, 1);
+      assert.equal(fixture.calls.find((call) => call.kind === "groq").body.tools, undefined);
     } finally { clearTimeout(keepAlive); }
   });
 }
@@ -431,19 +425,27 @@ test("passive greeting bypasses JEV and background persistence; access denial st
 });
 
 for (const provider of ["groq", "cerebras"]) {
-  for (const [label, slug, args, allowed] of [["valid", "DISCORD_SEND", '{"text":"hello"}', true], ["unoffered", "ARBITRARY_ACTION", "{}", false], ["invalid JSON", "DISCORD_SEND", "{broken", false], ["array", "DISCORD_SEND", "[]", false], ["null", "DISCORD_SEND", "null", false]]) {
-    test(`${provider} tool execution validates the offered tool and object arguments: ${label}`, async () => {
-      const reply = (body) => Response.json({ choices: [{ message: body.tools ? { role: "assistant", tool_calls: [{ id: "call-1", function: { name: slug, arguments: args } }] } : { content: "Final fixture reply" } }] });
-      const fixture = chatFixture({ env: provider === "cerebras" ? { GROQ_API_KEY: "", CEREBRAS_API_KEY: "fixture-cerebras" } : {}, [provider === "groq" ? "groqReply" : "cerebrasReply"]: reply });
-      assert.equal((await fixture.post("send on discord")).status, 200);
-      assert.equal(fixture.executions.length, allowed ? 1 : 0);
-      const followup = fixture.calls.filter((call) => call.kind === provider).at(-1).body;
-      const result = followup.messages.find((message) => message.role === "tool");
-      assert.match(result.content, allowed ? /sent/ : /Tool request rejected/);
-    });
-  }
+  test(`${provider} external app requests cannot advertise or execute function tools`, async () => {
+    const reply = (body) => {
+      assert.equal(body.tools, undefined);
+      assert.equal(body.tool_choice, undefined);
+      return Response.json({ choices: [{ message: {
+        content: "External apps are unavailable",
+        tool_calls: [{ id: "call-1", function: { name: "DISCORD_SEND", arguments: '{"text":"hello"}' } }],
+      } }] });
+    };
+    const fixture = chatFixture({ values: { needs_integrations: 1 }, env: provider === "cerebras" ? { GROQ_API_KEY: "", CEREBRAS_API_KEY: "fixture-cerebras" } : {}, [provider === "groq" ? "groqReply" : "cerebrasReply"]: reply });
+    const response = await fixture.post("send on discord");
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).text, "External apps are unavailable");
+    const state = JSON.parse(fixture.calls.find((call) => call.kind === "jev").body.state);
+    assert.equal(state.capabilities.integrations, false);
+    assert.deepEqual(state.toolkitCandidates, []);
+    assert.equal(fixture.calls.filter((call) => call.kind === provider).length, 1);
+    const prompt = fixture.calls.find((call) => call.kind === provider).body.messages[0].content;
+    assert.match(prompt, /ยังไม่ได้เชื่อมต่อแอปภายนอก/);
+  });
 }
-
 
 const sceneCatalog = [{ id: "00000000-0000-4000-8000-000000000001", label: "ห้องนอนตอนกลางคืน" }, { id: "00000000-0000-4000-8000-000000000002", label: "คาเฟ่" }];
 const autoSceneContext = { userId: "fixture-user", autoScene: true, activeSceneId: null, revision: "fixture-revision", scenes: sceneCatalog };

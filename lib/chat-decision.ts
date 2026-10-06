@@ -27,7 +27,7 @@ export function resolveChatPlan(context: JevContext, decision: VivianDecision | 
   }
   const memoryRecall = decision?.intent.type === "memory" && decision.intent.confidence >= jevConfidenceThreshold;
   const retrieveMemory = passive || localTools.includes("memory_retrieval") || memoryRecall || !decision || decision.memory.required || decision.memory.confidence < jevConfidenceThreshold;
-  const prepareIntegrations = !passive && (context.toolkitCandidates.length > 0 || !decision || decision.tool.integrations.required || decision.tool.integrations.confidence < jevConfidenceThreshold);
+  const prepareIntegrations = context.capabilities.integrations && !passive && (context.toolkitCandidates.length > 0 || !decision || decision.tool.integrations.required || decision.tool.integrations.confidence < jevConfidenceThreshold);
   const hints: string[] = [];
   if (!passive && decision && decision.responseMode.confidence >= jevConfidenceThreshold) {
     if (decision.responseMode.mode === "supportive") hints.push("Respond with gentle support while keeping Vivian's established personality. Do not diagnose the user.");

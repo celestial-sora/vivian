@@ -32,7 +32,6 @@ Add service keys to `.env.local` to wake up the features you want. See [.env.exa
 | Voice input | `GROQ_API_KEY` |
 | Voice output | `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID` |
 | Search | `GEMINI_API_KEY`; optional `TAVILY_API_KEY` |
-| Connected apps | `COMPOSIO_API_KEY` |
 | JEV decisions | `TYPESAFE_API_KEY` or `JEV_API_KEY` |
 | Cloud models and backgrounds | Optional Cloudflare R2 setup; see [R2 guide](docs/private-r2-storage.md) |
 
@@ -51,12 +50,15 @@ Keep row-level security (RLS) enabled on Supabase memory tables, with no public 
 ## What Vivian can do ♡
 
 - **Chat:** Starts with Groq, then tries Cerebras and Gemini if needed. She’ll do her best to keep the conversation going ✨
+- **Chat history:** Conversations and messages sync through Supabase across devices under the existing shared companion identity. Local copies retain unsynced messages during outages. Existing device history is imported with stable IDs to prevent duplicates. Apply `supabase/migrations/20261006005533_cloud_conversation_history.sql` before deploying this feature.
 - **Remember:** Keeps helpful long-term details and relationship/mood state. Secrets and sensitive one-off details aren’t saved automatically.
-- **Use tools:** Search the web, check Bangkok time and weather, calculate, look up memories, and use apps connected through Composio.
+- **Use tools:** Search the web, check Bangkok time and weather, calculate, look up memories.
 - **See pictures:** Send an image or camera frame for Gemini to understand.
 - **Talk:** Groq Whisper handles speech input; Fish Audio makes speech output. Vivian’s avatar lip-syncs while she talks. If voice or Live2D has a bad hair day, text chat still works.
 - **Chat in your language:** Automatic, Thai, English, Japanese, Korean, and Chinese.
 - **Set the scene:** Add your own labeled backgrounds. Scene images stay private and aren’t analyzed by AI.
+
+External app actions are currently unavailable. MCP servers have not been connected yet.
 
 ### A little extra smarts: JEV
 
@@ -85,6 +87,7 @@ All protected routes check sign-in and account access.
 | Route | What it does |
 | --- | --- |
 | `/api/chat` | Chat, search, image understanding, and tools |
+| `/api/conversations` | GET paginated shared conversations/messages; PUT validated, idempotent message batches |
 | `/api/memory` | Read and manage memories and conversation data |
 | `/api/stt` | Convert speech to text |
 | `/api/tts` | Generate speech audio |

@@ -9,7 +9,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 let fixture, child, base, scene;
 before(async () => {
   fixture = await startSceneFixture();
-  const env = { ...process.env, NEXT_PUBLIC_SUPABASE_URL: fixture.url, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_local_test_only", SUPABASE_URL: fixture.url, SUPABASE_SERVICE_ROLE_KEY: "fixture-admin", GROQ_API_KEY: "fixture-groq", TYPESAFE_API_KEY: "fixture-jev", JEV_ENABLED: "true", GEMINI_API_KEY: "", CEREBRAS_API_KEY: "", COMPOSIO_API_KEY: "", OPENROUTER_API_KEY: "", FISH_AUDIO_API_KEY: "", VIVIAN_TEST_SCENE_UPSTREAM: fixture.url, NODE_OPTIONS: `--import ${new URL("./scene-upstream-fixture.mjs", import.meta.url).href}` };
+  const env = { ...process.env, NEXT_PUBLIC_SUPABASE_URL: fixture.url, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_local_test_only", SUPABASE_URL: fixture.url, SUPABASE_SERVICE_ROLE_KEY: "fixture-admin", GROQ_API_KEY: "fixture-groq", TYPESAFE_API_KEY: "fixture-jev", JEV_ENABLED: "true", GEMINI_API_KEY: "", CEREBRAS_API_KEY: "", OPENROUTER_API_KEY: "", FISH_AUDIO_API_KEY: "", VIVIAN_TEST_SCENE_UPSTREAM: fixture.url, NODE_OPTIONS: `--import ${new URL("./scene-upstream-fixture.mjs", import.meta.url).href}` };
   child = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "-p", "0", "-H", "127.0.0.1"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
   let output = ""; child.stdout.on("data", (data) => { output += data; }); child.stderr.on("data", (data) => { output += data; });
   for (let i = 0; i < 150; i++) {

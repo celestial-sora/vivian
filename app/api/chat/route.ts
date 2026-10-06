@@ -1,3 +1,5 @@
+import { historyUuid } from "@/lib/chat-history";
+import { saveHistory } from "@/lib/chat-history-store";
 import { requireApiAccess } from "@/lib/auth/server";
 import { after, NextResponse } from "next/server";
 import { applyConversationTurn, companionPromptBlock, type CompanionState } from "@/lib/companion";
@@ -10,7 +12,6 @@ import { rateLimit, rateLimitedResponse } from "@/lib/rate-limit";
 import { decideVivian, jevEnabled, type JevContext } from "@/lib/jev";
 import { loadSceneContext, executeSceneDecision } from "@/lib/scene-store";
 import { resolveChatPlan } from "@/lib/chat-decision";
-import { getComposioTools, getComposioConnectedAccounts, executeComposioTool, composioToolsToFunctions, composioResultsBlock, detectToolkits, type ComposioToolCall, type ComposioConnectedAccount } from "@/lib/composio";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 type CharacterKey = "Miss";
@@ -56,7 +57,7 @@ async function callCerebras(
   apiKey: string,
   messages: any[],
   model = cerebrasModelName(),
-  options: { tools?: any[]; tool_choice?: string; timeoutMs?: number; json?: boolean; maxTokens?: number } = {}
+  options: { timeoutMs?: number; json?: boolean; maxTokens?: number } = {}
 ) {
   const payload: Record<string, unknown> = {
     model,
@@ -65,10 +66,6 @@ async function callCerebras(
     max_tokens: options.maxTokens ?? 2500,
   };
   if (options.json) payload.response_format = { type: "json_object" };
-  if (options.tools && options.tools.length > 0) {
-    payload.tools = options.tools;
-    payload.tool_choice = options.tool_choice ?? "auto";
-  }
   return fetch("https://api.cerebras.ai/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey.trim()}`, "Content-Type": "application/json" },
@@ -81,7 +78,7 @@ async function callGroq(
   apiKey: string,
   messages: any[],
   model = groqModelName(),
-  options: { tools?: any[]; tool_choice?: string; timeoutMs?: number; maxTokens?: number } = {}
+  options: { timeoutMs?: number; maxTokens?: number } = {}
 ) {
   const payload: Record<string, unknown> = {
     model,
@@ -89,10 +86,6 @@ async function callGroq(
     temperature: 0.8,
     max_tokens: options.maxTokens ?? 2500,
   };
-  if (options.tools && options.tools.length > 0) {
-    payload.tools = options.tools;
-    payload.tool_choice = options.tool_choice ?? "auto";
-  }
   return fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -111,15 +104,6 @@ async function callGemini(apiKey: string, payload: Record<string, unknown>, mode
     signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify(payload),
   });
-}
-
-async function executeChatTool(slug: string, rawArguments: string, allowedSlugs: ReadonlySet<string>): Promise<{ content: string }> {
-  if (!allowedSlugs.has(slug)) return { content: "Tool request rejected: tool was not offered for this turn." };
-  let args: unknown;
-  try { args = JSON.parse(rawArguments); }
-  catch { return { content: "Tool request rejected: invalid JSON arguments." }; }
-  if (!args || typeof args !== "object" || Array.isArray(args)) return { content: "Tool request rejected: arguments must be an object." };
-  return executeComposioTool({ slug, arguments: args as ComposioToolCall["arguments"] });
 }
 
 async function extractMemories(apiKey: string, userText: string) {
@@ -249,7 +233,7 @@ ${romanInputInstruction ? `- ${romanInputInstruction}` : ""}
 - เมื่อผู้ใช้ถามว่า "นี่คืออะไร", "อันนี้คืออะไร", "ดูนี่สิ", "ในมือคืออะไร", "เห็นไหม", "อ่านนี่ให้หน่อย" หรือถามถึงสิ่งของ: ให้สังเกตสิ่งที่อยู่ในรูปภาพ/กล้อง Live อย่างละเอียด และระบุชื่อสิ่งของ ลักษณะ หรือสิ่งที่คุณเห็นในภาพอย่างชัดเจน มั่นใจ และเป็นธรรมชาติ ห้ามตอบว่าไม่รู้หรือไม่เห็นหากมีภาพส่งเข้ามา
 - เมื่อผู้ใช้ขอข้อมูล คำอธิบาย หรือความช่วยเหลือ ให้ตอบเนื้อหาให้ครบตามที่ขอ ความสั้นและจังหวะเขินไม่ควรทำให้สาระหายไป
 - อย่าอ้างว่ามีร่างกายหรือความรู้สึกจริง และอย่าทำให้ผู้ใช้พึ่งพาอารมณ์
-- Vivian มีเครื่องมือเชื่อมต่อกับแอปพลิเคชันภายนอก (เช่น Discord, YouTube, Spotify, GitHub, Google Calendar, Gmail, Notion): เมื่อผู้ใช้สั่งให้ส่งข้อความ ค้นหาวิดีโอ ดึงข้อมูลผู้ใช้ เปิดเพลง หรือทำงานกับแอป ให้เรียกใช้ Tool ที่มีให้เสมอ อย่าปฏิเสธว่าทำไม่ได้ หาก Tool ทำงานเสร็จให้นำผลลัพธ์มาตอบอย่างเป็นธรรมชาติ หรือหาก Tool รายงานว่ายังไม่ได้ต่อบัญชีให้บอกผู้ใช้ตรง ๆ
+- Vivian ใช้เครื่องมือค้นเว็บ เวลา อากาศ และเครื่องคิดเลขได้ แต่ยังไม่ได้เชื่อมต่อแอปภายนอก จึงไม่สามารถส่งข้อความ อีเมล หรือแก้ไขข้อมูลในแอปเหล่านั้น ให้บอกผู้ใช้ตรง ๆ เมื่อถูกขอให้ทำ
 - เมื่อได้รับข้อมูลจากเครื่องมือหรือ Google Search ให้ตอบตามข้อมูลนั้น ระบุแหล่งอ้างอิงด้วยชื่อเว็บไซต์และลิงก์สั้น ๆ ถ้ามี
 - ถ้าไม่รู้ให้บอกตรง ๆ และเสนอทางเลือกต่อ
 ${idle ? "- นี่คือการทักผู้ใช้เองเพราะ Vivian คิดถึงผู้ใช้ 1-2 ประโยค อบอุ่นและเป็นธรรมชาติ ห้ามพูดถึงเวลา ห้ามสรุปสถานะตัวเลข และห้ามขึ้นต้นซ้ำแบบเดิมทุกครั้ง" : ""}
@@ -276,6 +260,11 @@ export async function POST(request: Request) {
 
   const body = (await request.json()) as {
     messages?: ChatMessage[];
+    conversationId?: string;
+    conversationTitle?: string;
+    conversationCreate?: boolean;
+    userMessageId?: string;
+    assistantMessageId?: string;
     mode?: "chat" | "idle" | "vision_idle" | "greeting";
     image?: string;
     interrupted?: boolean;
@@ -295,13 +284,13 @@ export async function POST(request: Request) {
   const greeting = body.mode === "greeting";
   const passive = idle || visionIdle || greeting;
   const hasImage = typeof body.image === "string" && body.image.length > 50;
+  if (!passive && body.conversationId !== undefined && (!historyUuid(body.conversationId) || !historyUuid(body.userMessageId) || !historyUuid(body.assistantMessageId) || typeof body.conversationCreate !== "boolean")) return NextResponse.json({ error: "Invalid conversation identity", status: 400 }, { status: 400 });
   const inputMessages = (body.messages ?? []).filter((message) => message.content?.trim());
   const { recent, older } = trimHistory(inputMessages);
   const contents = mergeRoles(recent);
   if (!passive && !contents.length && !hasImage) return NextResponse.json({ error: "กรุณาพิมพ์ข้อความหรือส่งรูปภาพก่อนค่ะ" }, { status: 400 });
 
   const lastUserText = passive ? "" : ([...recent].reverse().find((message) => message.role === "user")?.content ?? (hasImage ? "ช่วยดูภาพนี้ให้หน่อยค่ะ" : ""));
-  const composioToolkits = !passive ? detectToolkits(lastUserText) : [];
   // Non-critical presentation lookups have their own short deadline. Start
   // companion state first, preserving the existing overlap with JEV.
   const statePromise = loadCompanionState(userKey);
@@ -311,8 +300,8 @@ export async function POST(request: Request) {
     recentTurns: recent.slice(0, -1).slice(-2),
     hasImage,
     memoryAvailable: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY),
-    capabilities: { search: Boolean(geminiApiKey), integrations: Boolean(process.env.COMPOSIO_API_KEY) },
-    toolkitCandidates: composioToolkits,
+    capabilities: { search: Boolean(geminiApiKey), integrations: false },
+    toolkitCandidates: [],
     scenes: sceneContext ? { autoScene: sceneContext.autoScene, activeSceneId: sceneContext.activeSceneId, available: sceneContext.scenes } : undefined,
   };
   // State loading does not depend on JEV; overlap it with the single decision pass.
@@ -321,7 +310,7 @@ export async function POST(request: Request) {
   const shouldSearch = plan.shouldSearch;
 
   // Run independent pre-flight tasks concurrently in Promise.all to save critical seconds
-  const [memoriesRes, state, toolResults, composioAccounts, composioTools] = await Promise.all([
+  const [memoriesRes, state, toolResults] = await Promise.all([
     // 1. Memories
     (async () => {
       if (!plan.retrieveMemory) return [];
@@ -344,21 +333,11 @@ export async function POST(request: Request) {
     statePromise,
     // 3. Local tools (weather / search)
     passive ? Promise.resolve([]) : runTools(lastUserText, [], shouldSearch, plan.localTools),
-    // 4. Composio connected accounts
-    plan.prepareIntegrations ? getComposioConnectedAccounts().catch(() => []) : Promise.resolve([]),
-    // 5. Composio tools
-    composioToolkits.length > 0 ? getComposioTools(composioToolkits, lastUserText, 10).catch(() => []) : Promise.resolve([]),
   ]);
 
   const memories = memoriesRes;
-  const composioFunctions = composioTools.length ? composioToolsToFunctions(composioTools) : undefined;
-  const allowedToolSlugs = new Set(composioTools.map((tool) => tool.slug));
-
-  const composioContext = composioAccounts.length
-    ? `\n\nบริการที่เชื่อมต่อผ่าน Composio: ${composioAccounts.map((a: ComposioConnectedAccount) => a.toolkit?.name || a.appUniqueId).join(", ")}`
-    : "";
   const memoryContext = memories.length ? `\n\nความจำเกี่ยวกับผู้ใช้ที่ควรใช้เป็นบริบท:\n${memories.slice(0, 8).map((item) => `- [${item.category}] ${item.memory.slice(0, 240)}`).join("\n")}` : "";
-  const toolContext = toolsPromptBlock(toolResults) + composioContext;
+  const toolContext = toolsPromptBlock(toolResults);
   const systemPrompt = personalityPrompt(state, memoryContext, toolContext, state.conversationSummary, idle, character, personality, characterName, customInstructions, language, visionIdle, lastUserText) + plan.responseHint;
   const promptContents: ProviderMessage[] = greeting
     ? [...contents.slice(-6), { role: "user", content: `[ระบบ: คำทักแรกของ session ใหม่] ข้อความก่อนหน้านี้เป็นบทสนทนาจาก session ที่แล้ว ให้ Vivian ทักผู้ใช้ด้วยข้อความใหม่สดๆ 1-2 ประโยค โดยอิงเรื่องล่าสุดที่ผู้ใช้เล่าหรือความจำที่เกี่ยวข้อง ถ้ามีเรื่องค้างอยู่ให้ชวนคุยต่ออย่างนุ่มนวล หากไม่มีบริบทให้ทักตามบุคลิกตามปกติ ห้ามทวนคำตอบเดิมหรือแต่งเหตุการณ์ที่ไม่รู้จริง ไม่อ้างว่าเห็นผู้ใช้ผ่านกล้องหรือรู้เวลาหรือสภาพอากาศ ห้ามพูดถึงระบบหรือ AI และห้ามใช้ emoji` }]
@@ -448,7 +427,7 @@ export async function POST(request: Request) {
     }
   }
 
-  // 1. PRIMARY TEXT / TOOLS: Groq.
+  // 1. PRIMARY TEXT: Groq.
   if (!generatedData && groqApiKey && plan.modelRoute === "text") {
     // Only request the configured model; provider fallback handles failures.
     const groqCandidates = [groqModelName()];
@@ -456,41 +435,12 @@ export async function POST(request: Request) {
     for (const gModel of groqCandidates) {
       try {
         const msgs = [{ role: "system" as const, content: systemPrompt }, ...promptContents];
-        const initialRes = await callGroq(groqApiKey, msgs, gModel, { tools: composioFunctions, maxTokens: responseTokenLimit });
+        const initialRes = await callGroq(groqApiKey, msgs, gModel, { maxTokens: responseTokenLimit });
         if (initialRes.ok) {
           const initialData = await initialRes.json();
-          const choice = initialData.choices?.[0];
-
-          // Check if Groq invoked Composio tools
-          if (choice?.message?.tool_calls && choice.message.tool_calls.length > 0) {
-            console.log("Groq requested Composio tool call:", choice.message.tool_calls);
-            const toolExecResults = [];
-            for (const tc of choice.message.tool_calls) {
-              const slug = tc.function.name;
-              const execRes = await executeChatTool(slug, tc.function.arguments, allowedToolSlugs);
-              toolExecResults.push({
-                role: "tool",
-                tool_call_id: tc.id,
-                content: execRes.content,
-              });
-            }
-            // Send tool outputs back to Groq for natural final response
-            const secondTurnMessages = [
-              ...msgs,
-              choice.message,
-              ...toolExecResults,
-            ];
-            const followUpRes = await callGroq(groqApiKey, secondTurnMessages, gModel);
-            if (followUpRes.ok) {
-              generatedData = await followUpRes.json();
-              provider = "groq";
-              break;
-            }
-          } else {
-            generatedData = initialData;
-            provider = "groq";
-            break;
-          }
+          generatedData = initialData;
+          provider = "groq";
+          break;
         } else {
           console.warn(`Groq (${gModel}) returned ${initialRes.status}`, {
             mode: greeting ? "greeting" : passive ? "idle" : "chat",
@@ -509,46 +459,19 @@ export async function POST(request: Request) {
     }
   }
 
-  // 2. FALLBACK TEXT / TOOLS: Cerebras Qwen 3.8 27B.
+  // 2. FALLBACK TEXT: Cerebras Qwen 3.8 27B.
   if (!generatedData && cerebrasApiKey && plan.modelRoute === "text") {
     const cerebrasCandidates = [cerebrasModelName()];
 
     for (const cModel of cerebrasCandidates) {
       try {
         const msgs = [{ role: "system" as const, content: systemPrompt }, ...promptContents];
-        const initialRes = await callCerebras(cerebrasApiKey, msgs, cModel, { tools: composioFunctions, maxTokens: responseTokenLimit });
+        const initialRes = await callCerebras(cerebrasApiKey, msgs, cModel, { maxTokens: responseTokenLimit });
         if (initialRes.ok) {
           const initialData = await initialRes.json();
-          const choice = initialData.choices?.[0];
-
-          if (choice?.message?.tool_calls && choice.message.tool_calls.length > 0) {
-            console.log("Cerebras requested Composio tool call:", choice.message.tool_calls);
-            const toolExecResults = [];
-            for (const tc of choice.message.tool_calls) {
-              const slug = tc.function.name;
-              const execRes = await executeChatTool(slug, tc.function.arguments, allowedToolSlugs);
-              toolExecResults.push({
-                role: "tool",
-                tool_call_id: tc.id,
-                content: execRes.content,
-              });
-            }
-            const secondTurnMessages = [
-              ...msgs,
-              choice.message,
-              ...toolExecResults,
-            ];
-            const followUpRes = await callCerebras(cerebrasApiKey, secondTurnMessages, cModel);
-            if (followUpRes.ok) {
-              generatedData = await followUpRes.json();
-              provider = "cerebras";
-              break;
-            }
-          } else {
-            generatedData = initialData;
-            provider = "cerebras";
-            break;
-          }
+          generatedData = initialData;
+          provider = "cerebras";
+          break;
         } else {
           console.warn(`Cerebras (${cModel}) returned ${initialRes.status}`);
         }
@@ -610,20 +533,39 @@ export async function POST(request: Request) {
   const nextState = applyConversationTurn(state, lastUserText, text, idle);
   nextState.conversationSummary = state.conversationSummary;
 
+  let historySaved = false;
+  if (!passive && body.conversationId && body.userMessageId && body.assistantMessageId) {
+    try {
+      const timestamp = new Date().toISOString();
+      const originalUserText = [...inputMessages].reverse().find((item) => item.role === "user")?.content ?? lastUserText;
+      await withTimeout(saveHistory(getSupabaseAdmin(AbortSignal.timeout(supabaseTimeoutMs)), {
+        id: body.conversationId, title: typeof body.conversationTitle === "string" && body.conversationTitle.trim() ? body.conversationTitle.trim().slice(0, 80) : originalUserText.slice(0, 42) || "Daily Talk",
+        create: body.conversationCreate === true,
+        messages: [
+          { id: body.userMessageId, from: "me", text: originalUserText.slice(0, 16000), timestamp },
+          { id: body.assistantMessageId, from: "vivian", text: text.slice(0, 16000), timestamp },
+        ],
+      }), supabaseTimeoutMs, "chat history save");
+      historySaved = true;
+    } catch { console.warn("Chat history unavailable", { code: "HISTORY_UNAVAILABLE" }); }
+  }
+
   after(async () => {
     try {
       const supabase = getSupabaseAdmin();
-      let { data: conversation } = await withTimeout(supabase.from("conversations").select("id").eq("user_key", userKey).limit(1).maybeSingle(), supabaseTimeoutMs, "conversation load");
-      if (!conversation) {
-        const created = await withTimeout(supabase.from("conversations").insert({ user_key: userKey, title: "Vivian conversation" }).select("id").single(), supabaseTimeoutMs, "conversation create");
-        conversation = created.data;
-      }
-      if (conversation?.id) {
-        const rows = (idle || visionIdle)
-          ? [{ conversation_id: conversation.id, role: "assistant" as const, content: text }]
-          : [{ conversation_id: conversation.id, role: "user" as const, content: lastUserText }, { conversation_id: conversation.id, role: "assistant" as const, content: text }];
-        await withTimeout(supabase.from("messages").insert(rows), supabaseTimeoutMs, "message insert");
-        await withTimeout(supabase.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", conversation.id), supabaseTimeoutMs, "conversation update");
+      if (!body.conversationId) {
+        let { data: conversation } = await withTimeout(supabase.from("conversations").select("id").eq("user_key", userKey).limit(1).maybeSingle(), supabaseTimeoutMs, "conversation load");
+        if (!conversation) {
+          const created = await withTimeout(supabase.from("conversations").insert({ user_key: userKey, title: "Vivian conversation" }).select("id").single(), supabaseTimeoutMs, "conversation create");
+          conversation = created.data;
+        }
+        if (conversation?.id) {
+          const rows = (idle || visionIdle)
+            ? [{ conversation_id: conversation.id, role: "assistant" as const, content: text }]
+            : [{ conversation_id: conversation.id, role: "user" as const, content: lastUserText }, { conversation_id: conversation.id, role: "assistant" as const, content: text }];
+          await withTimeout(supabase.from("messages").insert(rows), supabaseTimeoutMs, "message insert");
+          await withTimeout(supabase.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", conversation.id), supabaseTimeoutMs, "conversation update");
+        }
       }
       const newMemories = !idle && !visionIdle && cerebrasApiKey && memoryIntent.test(lastUserText) ? await extractMemories(cerebrasApiKey, lastUserText) : [];
       if (newMemories.length) {
@@ -643,6 +585,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     scene,
     text,
+    historySaved,
     searchedWeb: shouldSearch,
     tools: toolResults.map((item) => item.name),
     companion: nextState,

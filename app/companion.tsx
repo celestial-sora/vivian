@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { captureModelRestState, restoreModelRestState, type ModelRestState, type CubismRestModel } from "@/lib/model-rest-state";
 import { attachModelWind, type WindInternalModel } from "@/lib/model-wind";
+import { useConversationHistory } from "@/lib/use-conversation-history";
+import { historyMessage, HISTORY_CACHE_KEY, type HistoryMessage, type HistoryConversation } from "@/lib/chat-history";
 import { authFetch } from "@/lib/auth/fetch";
 import { decayCompanionState, type CompanionState, defaultCompanionState, normalizeMood, moodLabel, type Mood } from "@/lib/companion";
 import { MODEL_CONFIG, type ModelKey } from "@/lib/models";
@@ -21,11 +23,11 @@ function Icon({ name, size = 24 }: { name: IconName; size?: number }) {
   return <span className="app-icon" style={{ width: size, height: size, maskImage: `url("${iconUrl}")`, WebkitMaskImage: `url("${iconUrl}")` }} aria-hidden="true" />;
 }
 
-type Message = { from: "me" | "vivian"; text: string; timestamp?: string };
+type Message = HistoryMessage;
 type Memory = { id: number; memory: string; category: string; importance: number };
 type Panel = "conversations" | "memories" | "character" | "scenes" | "voice" | "status" | "settings";
-type Conversation = { id: string; title: string; updatedAt: number; messages: Message[] };
-const CONVERSATIONS_KEY = "vivian-conversations-v1";
+type Conversation = HistoryConversation;
+const CONVERSATIONS_KEY = HISTORY_CACHE_KEY;
 type SpeechLanguage = "global" | "th" | "en" | "ja" | "ko" | "zh";
 const LANGUAGE_OPTIONS: Array<{ code: SpeechLanguage; label: string; nativeName: string }> = [
   { code: "global", label: "ทุกภาษา", nativeName: "Global" },
@@ -40,7 +42,7 @@ const greetings = [
   "...วันนี้ที่โรงเรียนเป็นยังไงบ้างคะ มีอะไรอยากเล่าให้หนูฟังไหม...",
   "...มีเรื่องอยากคุยเหรอคะ เล่าให้หนูฟังได้นะ ไม่ต้องเกร็ง...",
 ];
-const greeting = (): Message => ({ from: "vivian", text: greetings[Math.floor(Math.random() * greetings.length)] });
+const greeting = (): Message => historyMessage("vivian", greetings[Math.floor(Math.random() * greetings.length)]);
 const GREETING_PENDING = "Vivian กำลังคิดคำทักทายให้คุณ...";
 const BACKGROUNDS = { day: "/backgrounds/christmas-day-4x3.jpg", night: "/backgrounds/christmas-night-4x3.jpg" } as const;
 const PRESET_SCENE_IMAGES = Object.values(BACKGROUNDS);
@@ -133,8 +135,6 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   const messagesRef = useRef<Message[]>([initialGreeting.current]);
   const companionRef = useRef<CompanionState>(defaultCompanionState());
   const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState<Message[]>([initialGreeting.current]);
-  const [historyMessages, setHistoryMessages] = useState<Message[]>([]);
   const [memories, setMemories] = useState<Memory[]>([]);
   const [recording, setRecording] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -142,8 +142,6 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   const [sttPreview, setSttPreview] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [panel, setPanel] = useState<Panel | null>(null);
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeConversationId, setActiveConversationId] = useState("daily-talk");
   const [greetingTrigger, setGreetingTrigger] = useState(0);
   const activeConversationRef = useRef("daily-talk");
   const [conversationSearch, setConversationSearch] = useState("");
@@ -181,6 +179,8 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   const [speechLanguage, setSpeechLanguage] = useState<SpeechLanguage>("th");
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
+  const history = useConversationHistory(initialGreeting.current, GREETING_PENDING, sending || resetting);
+  const { messages, setMessages, conversations, activeConversationId, setActiveConversationId } = history;
   const [resetConfirming, setResetConfirming] = useState(false);
   const [resetNotice, setResetNotice] = useState<string | null>(null);
   const [streak, setStreak] = useState(0);
@@ -218,20 +218,6 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       .catch(() => { if (!controller.signal.aborted) setJevConfigured(null); });
     return () => controller.abort();
   }, [sidebarOpen, panel]);
-
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(window.localStorage.getItem(CONVERSATIONS_KEY) ?? "[]");
-      const valid: Conversation[] = Array.isArray(saved) ? saved.filter((item) => typeof item.id === "string" && Array.isArray(item.messages)) : [];
-      setConversations(valid);
-      const active = window.localStorage.getItem("vivian-active-conversation");
-      if (active) {
-        setActiveConversationId(active);
-        const previous = valid.find((item) => item.id === active);
-        if (previous?.messages.length) setMessages(previous.messages);
-      }
-    } catch { /* Corrupt local history must not block Vivian. */ }
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -396,17 +382,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   }
 
   useEffect(() => {
-    if (!preferencesReady) return;
-    setConversations((current) => {
-      const existing = current.find((item) => item.id === activeConversationId);
-      const next = [{ id: activeConversationId, title: existing?.title === "Daily Talk" ? messages.find((item) => item.from === "me")?.text.slice(0, 42) ?? existing.title : existing?.title ?? messages.find((item) => item.from === "me")?.text.slice(0, 42) ?? "Daily Talk", updatedAt: Date.now(), messages }, ...current.filter((item) => item.id !== activeConversationId)].slice(0, 30);
-      try { window.localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(next)); } catch { /* Private mode or storage quota. */ }
-      return next;
-    });
-  }, [messages, activeConversationId, preferencesReady]);
-
-  useEffect(() => {
-    if (!preferencesReady) return;
+    if (!preferencesReady || !history.ready) return;
     if (messagesRef.current.length !== 1 || messagesRef.current[0].text !== GREETING_PENDING) return;
     const previousSession = conversations
       .filter((item) => item.id !== activeConversationId && item.messages.some((entry) => entry.from === "me"))
@@ -437,7 +413,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         if (!text) throw new Error("Empty greeting");
         if (requestId !== greetingGenerationRef.current || activeConversationRef.current !== conversationId || messagesRef.current[0]?.text !== GREETING_PENDING) return;
         greetingTextRef.current = text;
-        setMessages((current) => current.length === 1 && current[0].from === "vivian" ? [{ from: "vivian", text }] : [...current, { from: "vivian", text }]);
+        setMessages((current) => current.length === 1 && current[0].from === "vivian" ? [historyMessage("vivian", text)] : [...current, historyMessage("vivian", text)]);
         if (audioUnlockedByUserRef.current && !mutedRef.current && !greetingSpokenRef.current) {
           greetingSpokenRef.current = true;
           void speak(text);
@@ -457,7 +433,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       }
     })();
     return () => controller.abort();
-  }, [preferencesReady, greetingTrigger]);
+  }, [preferencesReady, greetingTrigger, history.ready, setMessages]);
 
   useEffect(() => {
     if (!sidebarOpen) return;
@@ -688,7 +664,6 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       const data = await response.json();
       if (generation !== memoryGenerationRef.current || resettingRef.current) return;
       if (Array.isArray(data.memories)) setMemories(data.memories);
-      if (Array.isArray(data.messages)) setHistoryMessages(data.messages.map((item: { role: string; content: string; created_at?: string }) => ({ from: item.role === "user" ? "me" : "vivian", text: item.content, timestamp: item.created_at })));
       const next = normalizeCompanion(data.companion);
       if (next) setCompanion(next);
     } catch { /* Vivian stays usable while Supabase is unavailable. */ }
@@ -941,7 +916,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         imageToSend = liveFrame;
       }
     }
-    if (sendingRef.current || resettingRef.current) return;
+    if (sendingRef.current || resettingRef.current || !history.ready) return;
     if (!idle && !visionIdle && !text && !imageToSend) return;
     if (!idle && !visionIdle) {
       greetingGenerationRef.current += 1;
@@ -958,7 +933,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     markActivity();
     if (!idle && !visionIdle) interactedRef.current = true;
     const displayText = text || (imageToSend ? "[ส่งรูปภาพ]" : "");
-    const nextMessages = (idle || visionIdle) ? messagesRef.current : [...messagesRef.current.filter((item) => item.text !== GREETING_PENDING), { from: "me" as const, text: displayText }];
+    const nextMessages = (idle || visionIdle) ? messagesRef.current : [...messagesRef.current.filter((item) => item.text !== GREETING_PENDING), historyMessage("me", displayText)];
     if (!idle && !visionIdle) {
       setMessages(nextMessages);
       setMessage("");
@@ -967,6 +942,8 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     setSending(true);
     sendingRef.current = true;
     const sceneGeneration = sceneLibrary.getGeneration();
+    const replyMessageId = crypto.randomUUID();
+    const requestConversationId = activeConversationRef.current;
     try {
       const response = await authFetch("/api/chat", {
         method: "POST",
@@ -974,6 +951,11 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         signal: abortAfter(CHAT_TIMEOUT_MS),
         body: JSON.stringify({
           mode: visionIdle ? "vision_idle" : idle ? "idle" : "chat",
+          conversationId: requestConversationId,
+          conversationCreate: !history.isCloudConversation(requestConversationId),
+          conversationTitle: conversations.find((item) => item.id === requestConversationId)?.title ?? (text.slice(0, 42) || "Daily Talk"),
+          userMessageId: nextMessages.filter((item) => item.from === "me").at(-1)?.id,
+          assistantMessageId: replyMessageId,
           messages: nextMessages.filter((item) => item.text !== GREETING_PENDING).map((item) => ({ role: item.from === "me" ? "user" : "assistant", content: item.text })),
           image: imageToSend ?? undefined,
           character: selectedModel,
@@ -989,7 +971,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       // Do not reveal the reply bubble before Fish Audio has started. This
       // keeps the visible text and spoken response arriving together.
       if (!muted) await speak(reply);
-      setMessages((current) => [...current, { from: "vivian", text: reply, timestamp: new Date().toISOString() }]);
+      setMessages((current) => [...current, historyMessage("vivian", reply, replyMessageId)]);
       const nextCompanion = normalizeCompanion(data.companion);
       if (nextCompanion) setCompanion(nextCompanion);
       if (data.memories?.length) setMemories(data.memories.filter((item: Memory) => typeof item.id === "number"));
@@ -1006,7 +988,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
           : error instanceof Error && error.message === "CHAT_NOT_CONFIGURED" ? "ตอนนี้ระบบแชตยังไม่พร้อมใช้งานค่ะ"
           : "ตอนนี้เชื่อมต่อไม่สำเร็จ ลองใหม่อีกครั้งนะคะ";
         setErrorNotice(message);
-        setMessages((current) => [...current, { from: "vivian", text: message }]);
+        setMessages((current) => [...current, historyMessage("vivian", message)]);
       }
     } finally {
       setSending(false);
@@ -1047,28 +1029,28 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     const argument = match[1]?.trim() ?? "";
     const expressions = (activeModel?.expressions ?? []);
     if (argument.toLowerCase() === "list") {
-      setMessages((current) => [...current, { from: "me", text }, { from: "vivian", text: `Expression ที่ใช้ได้: ${expressions.join(", ")}` }]);
+      setMessages((current) => [...current, historyMessage("me", text), historyMessage("vivian", `Expression ที่ใช้ได้: ${expressions.join(", ")}`)]);
       return true;
     }
     if (!argument || argument.toLowerCase() === "default" || argument.toLowerCase() === "reset") {
       resetReaction();
-      setMessages((current) => [...current, { from: "me", text }, { from: "vivian", text: "กลับไปใช้ expression default แล้วค่ะ" }]);
+      setMessages((current) => [...current, historyMessage("me", text), historyMessage("vivian", "กลับไปใช้ expression default แล้วค่ะ")]);
       return true;
     }
     const expression = expressions.find((item) => item.trim().toLowerCase() === argument.toLowerCase());
     if (!expression) {
-      setMessages((current) => [...current, { from: "me", text }, { from: "vivian", text: "ไม่พบ expression นี้ค่ะ ลองใช้ /expression list เพื่อดูรายการ" }]);
+      setMessages((current) => [...current, historyMessage("me", text), historyMessage("vivian", "ไม่พบ expression นี้ค่ะ ลองใช้ /expression list เพื่อดูรายการ")]);
       return true;
     }
     try {
       if (!modelRef.current) throw new Error("Live2D model is not ready");
       await modelRef.current.expression(expression);
       setActiveExpression(expression);
-      setMessages((current) => [...current, { from: "me", text }, { from: "vivian", text: `เปลี่ยนเป็น expression ${expression.trim()} แล้วค่ะ` }]);
+      setMessages((current) => [...current, historyMessage("me", text), historyMessage("vivian", `เปลี่ยนเป็น expression ${expression.trim()} แล้วค่ะ`)]);
     } catch (error) {
       console.warn("Manual Live2D expression unavailable", error);
       resetReaction();
-      setMessages((current) => [...current, { from: "me", text }, { from: "vivian", text: "ยังเปลี่ยน expression ไม่ได้ค่ะ โมเดลกำลังโหลดอยู่" }]);
+      setMessages((current) => [...current, historyMessage("me", text), historyMessage("vivian", "ยังเปลี่ยน expression ไม่ได้ค่ะ โมเดลกำลังโหลดอยู่")]);
     }
     return true;
   }
@@ -1223,7 +1205,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       }
     } catch {
       resetReaction();
-      setMessages((current) => [...current, { from: "vivian", text: "ยังไม่ได้รับสิทธิ์ใช้ไมโครโฟนค่ะ" }]);
+      setMessages((current) => [...current, historyMessage("vivian", "ยังไม่ได้รับสิทธิ์ใช้ไมโครโฟนค่ะ")]);
     }
   }
   function stopRecording() {
@@ -1437,7 +1419,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   }
 
   async function resetVivian(): Promise<void> {
-    if (sendingRef.current || resettingRef.current) return;
+    if (sendingRef.current || resettingRef.current || !history.ready) return;
     setResetConfirming(false);
     resettingRef.current = true;
     memoryGenerationRef.current += 1;
@@ -1451,6 +1433,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     stopRecording();
     stopCamera();
     try {
+      await history.pause();
       const response = await authFetch("/api/memory", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scope: "all" }) });
       if (!response.ok) throw new Error("Reset failed");
       const data = await response.json() as { ok?: boolean };
@@ -1459,10 +1442,9 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       const id = crypto.randomUUID();
       window.localStorage.setItem("vivian-active-conversation", id);
       setActiveConversationId(id);
-      setConversations([]);
-      initialGreeting.current = { from: "vivian", text: "...ไง เริ่มคุยกันใหม่ได้เลยนะ" };
+      history.clear();
+      initialGreeting.current = historyMessage("vivian", "...ไง เริ่มคุยกันใหม่ได้เลยนะ");
       setMessages([]);
-      setHistoryMessages([]);
       setMemories([]);
       setCompanion(defaultCompanionState());
       setCustomInstructions("");
@@ -1482,12 +1464,13 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     } finally {
       resettingRef.current = false;
       setResetting(false);
+      history.resume();
     }
   }
 
-  function openPanel(next: Panel) { setPanel(next); setSidebarOpen(true); }
+  function openPanel(next: Panel) { setPanel(next); setSidebarOpen(true); if (next === "conversations") void history.refresh(); }
   function selectConversation(conversation: Conversation) {
-    if (sending || resettingRef.current) return;
+    if (sending || resettingRef.current || !history.ready) return;
     setErrorNotice(null);
     greetingGenerationRef.current += 1;
     greetingRequestRef.current?.abort();
@@ -1499,7 +1482,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     setSidebarOpen(false);
   }
   function newConversation() {
-    if (sending || resettingRef.current) return;
+    if (sending || resettingRef.current || !history.ready) return;
     setErrorNotice(null);
     greetingGenerationRef.current += 1;
     greetingRequestRef.current?.abort();
@@ -1581,7 +1564,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         <button className={`circle-control ${attachedImage ? "is-active" : ""}`} type="button" onClick={() => fileInputRef.current?.click()} aria-label="แนบรูปภาพ"><Icon name="clip"/></button>
         <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleImageUpload} tabIndex={-1} />
         <input value={message} onChange={(event) => setMessage(event.target.value)} placeholder={recording ? "กำลังฟัง... กดไมค์เพื่อ Mute" : cameraActive ? "กล้อง Live กำลังทำงาน... พิมพ์คุยได้" : "Ask Vivian"} aria-label="ข้อความถึง Vivian" />
-        <button className="send-text" type="submit" disabled={sending || (!message.trim() && !attachedImage)} aria-label="ส่งข้อความ"><Icon name="send" size={22}/></button>
+        <button className="send-text" type="submit" disabled={sending || !history.ready || (!message.trim() && !attachedImage)} aria-label="ส่งข้อความ"><Icon name="send" size={22}/></button>
         <button className="text-send" type="button" onClick={() => openPanel("conversations")}><Icon name="message" size={23}/><span>Chat</span></button>
       </form>
     </section>
@@ -1599,9 +1582,9 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
             {panel === "conversations" && <>
               <label className="floating-search"><Icon name="search" size={17}/><input value={conversationSearch} onChange={(event) => setConversationSearch(event.target.value)} placeholder="Search conversations" /></label>
               <div className="conversation-list">{conversations.filter((item) => item.title.toLowerCase().includes(conversationSearch.toLowerCase()) || item.messages.some((entry) => entry.text.toLowerCase().includes(conversationSearch.toLowerCase()))).sort((a, b) => b.updatedAt - a.updatedAt).map((conversation) => <button key={conversation.id} type="button" className={conversation.id === activeConversationId ? "is-selected" : ""} onClick={() => selectConversation(conversation)}><span className="conversation-avatar">V</span><span><strong>{conversation.title}</strong><small>{conversation.messages.at(-1)?.text ?? "Start chatting with Vivian"}</small></span><time>{new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(conversation.updatedAt)}</time></button>)}</div>
-              {historyMessages.length > 0 && <details className="cloud-history"><summary>Earlier messages · {historyMessages.length}</summary><div className="chat-history">{historyMessages.map((item, index) => <div className={`chat-message ${item.from}`} key={`${item.timestamp ?? "past"}-${index}`}><small>{item.from === "me" ? "You" : "Vivian"}</small><p>{item.text}</p></div>)}</div></details>}
+              {messages.some((item) => item.text !== GREETING_PENDING) && <details className="cloud-history"><summary>Messages in this conversation</summary><div className="chat-history">{messages.filter((item) => item.text !== GREETING_PENDING).map((item, index) => <div className={`chat-message ${item.from}`} key={item.id ?? index}><small>{item.from === "me" ? "You" : "Vivian"}</small><p>{item.text}</p></div>)}</div></details>}
               {!conversations.length && <p className="floating-empty">Your conversations will appear here.</p>}
-              <p className="floating-note">Recent conversations are saved on this device. Vivian’s existing cloud memory continues to work across chats.</p>
+              <p role="status">{!history.ready ? "Loading chat history…" : history.notice ?? "Chat history · Supabase"}</p><p className="floating-note">Conversations sync through Supabase across devices. Local copies keep unsynced messages available.</p>
             </>}
             {panel === "memories" && <>
               <div className="bond-panel"><p><strong>Daily check-in</strong> {streak} days together</p><p><strong>Mood</strong>{moodLabel(companion.mood)}</p>{[["Affinity", companion.affinity], ["Trust", companion.trust], ["Familiarity", companion.familiarity]].map(([label, value]) => <div key={String(label)}><span>{label}</span><i><b style={{ width: `${value}%` }}/></i><em>{value}</em></div>)}</div>
