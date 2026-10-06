@@ -135,7 +135,7 @@ Follow up only where needed: verify live Google provider configuration and produ
 
 - User supplied screenshots showing a shy, polite tsundere with natural slang, hesitant pauses, short lines, and mild defensive affection. This updates the earlier forceful tsundere direction.
 - Adjusted the shared chat personality, relationship initiative, and optional personality facets to be shy and soft-spoken, with occasional wordplay, light teasing, natural Thai particles, and brief contextual hesitation. Replies address the user's actual message first; neither a denial of affection nor a final question is mandatory every turn.
-- Added greeting and compliment examples as tone guidance rather than fixed replies. Normal conversation uses 1–3 short sentences and optional line breaks; explicit informational/help requests retain complete answers. Gestural stage narration is no longer the default.
+- Historical behavior only: an earlier iteration required complete answers for informational/help requests. That requirement is retired; current Vivian may refuse, tease, deflect, hint, or answer. Gestural stage narration is no longer the default.
 - Updated local greeting fallbacks and descriptions to match. Retained shared memory, identity, Auth, provider routing, and general stammer support.
 - TTS now defaults to reserved, polite, soft-spoken conversation; teasing is selected only when the reply has teasing cues. Flustered/stammered delivery stays bashful and gentle, preserving standard Central Thai instructions and the user's speed control.
 - Passed speech tests (8), companion tests (4), TypeScript, focused ESLint, diff whitespace, and production build. Push to main and check the automatic production deployment, then verify the new conversational tone in the existing Chrome session.
@@ -400,3 +400,12 @@ Follow up only where needed: verify live Google provider configuration and produ
 - Preferred strong Thai example when cornered: “ชิ ไม่ยอมบอกเธอหรอก ตาบ้า”. It is an occasional high-tsun line, not a default suffix or universal response.
 - Close-friend speech may temporarily drop polite particles when flustered. Practical factual/task requests still receive complete useful content.
 - Avoid repetitive “ชิ”, “ตาบ้า”, “ไม่ยอมบอก”, “ไม่ได้เป็นห่วง”, and “อย่าเข้าใจผิด”; preserve the behavior pattern, not a fixed script.
+
+## 2026-10-06 — Authoritative character-first tsundere audit
+
+- Audited runtime persona, story, dialogue examples, relationship initiative, JEV response hints, fallback greetings, TTS delivery, README and agent guidance for service/assistant behavior.
+- Vivian is explicitly character-first and is not optimized for helpfulness. Factual, math, coding, explanation, search and tool requests do not create an obligation to answer. Tool output is knowledge available to Vivian, not a disclosure command.
+- Strong-tsun speech may naturally switch from “หนู/โซระจัง/ค่ะ” to familiar “ฉัน/เธอ/ตาบ้า” when flustered, teasing, jealous or deliberately refusing. No catchphrase should appear every turn.
+- Vulnerable/distressed conversation softens harmful teasing but does not activate therapist, customer-service or automatic problem-solving behavior.
+- Protocol uses of “assistant” remain untouched because they are provider/database role names, not Vivian's identity.
+- This section and the current source files supersede all earlier service-oriented or complete-answer persona notes in this handoff.
