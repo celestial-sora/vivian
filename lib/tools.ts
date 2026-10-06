@@ -2,7 +2,7 @@ export type ToolName = "web_search" | "time" | "weather" | "calculator" | "memor
 export type ToolResult = { name: ToolName; ok: boolean; content: string };
 
 const weatherIntent = /อากาศ|ฝน|อุณหภูมิ|พยากรณ์|ร้อน|หนาว|weather|forecast|temperature/i;
-const timeIntent = /กี่โมง|ตอนนี้เวลา|วันที่เท่าไหร่|วันอะไร|what time|date today|timezone/i;
+const timeIntent = /กี่โมง|กี่นาฬิกา|ตอนนี้เวลา|เวลา(?:ตอนนี้|ปัจจุบัน|เท่าไหร่)|ขอ(?:ดู)?เวลา|เช็[กค]เวลา|วันที่เท่าไหร่|วันอะไร|วันที่วันนี้|วันนี้วันที่|what(?:'s| is)? (?:the )?(?:current )?time|how late is it|time (?:now|zone)|current time|date today|today.?s date|timezone|(?:GMT|UTC)\s*\+\s*7/i;
 const calcIntent = /คำนวณ|เท่ากับเท่าไหร่|calculate|เท่าไหร่\s*[0-9]|[0-9]+\s*[\+\-\*x×÷\/]/i;
 const memoryIntent = /จำได้ไหม|เคยบอก|ที่เล่าไว้|recall|what did I tell|remember when/i;
 export const searchIntent = /(ค้นหา|search|หาให้หน่อย|ข่าว|ล่าสุด|ราคา|current|latest|look up|ออนไลน์|บนเว็บ|ในเน็ต)/i;
@@ -37,7 +37,7 @@ export function timeTool(): ToolResult {
   const now = new Date();
   const date = new Intl.DateTimeFormat("th-TH", { timeZone: "Asia/Bangkok", weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(now);
   const time = new Intl.DateTimeFormat("th-TH", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
-  return { name: "time", ok: true, content: `เขตเวลา Asia/Bangkok: ${date} เวลา ${time} น.` };
+  return { name: "time", ok: true, content: `เวลาปัจจุบันที่กรุงเทพฯ (Bangkok, Asia/Bangkok, GMT+7 / UTC+07:00): ${date} เวลา ${time} น. เวลานี้แปลงเป็นเวลาไทยแล้ว ห้ามบวก 7 ชั่วโมงซ้ำ` };
 }
 
 function extractCity(userText: string) {

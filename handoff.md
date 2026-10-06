@@ -377,3 +377,10 @@ Follow up only where needed: verify live Google provider configuration and produ
 - Current linked production alias is https://vivianlabs.vercel.app (deployment URL: https://vivianlabs-4vpvft66q-celestial-sora1.vercel.app). Alias inspection confirms it points to this deployment. The historical `vivian-chan.vercel.app` alias was not available for inspection; it is not claimed as updated.
 - Remote production build and TypeScript succeeded. Production homepage redirects unsigned users to login, login returns 200, and new conversation GET/PUT endpoints return 401 `AUTH_REQUIRED` with `private, no-store` without login. No authenticated production messages, provider calls or cloud memories were created during these checks. Physical cross-device authenticated verification remains outstanding.
 - Pre-existing expression-layer changes remain untouched and uncommitted in the workspace; they were excluded from this production source.
+
+
+## 2026-10-06 — Bangkok time default
+
+- Time tool already formats with `Asia/Bangkok`; expanded deterministic detection for Thai/English current-time/date queries and GMT+7/UTC+7 wording. Tool evidence now explicitly identifies Bangkok, GMT+7 and UTC+07:00 and prevents adding the offset twice.
+- Shared chat prompt defaults unspecified time/date questions to Bangkok and current time-tool evidence, avoiding server UTC and stale conversation times. Explicit timezone requests remain supported; unavailable evidence must not produce a guessed current time.
+- TypeScript and whitespace checks passed. No tests were added or run for this follow-up. Pre-existing expression-layer edits remain untouched. Production deployment result will follow.
