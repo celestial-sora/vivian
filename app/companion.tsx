@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { captureModelRestState, restoreModelRestState, type ModelRestState, type CubismRestModel } from "@/lib/model-rest-state";
 import { attachModelWind, type WindInternalModel } from "@/lib/model-wind";
 import { waitForCubismCore } from "@/lib/model-runtime";
+import { scheduleBackgroundWork } from "@/lib/startup-background";
+import { startTiming, finishTiming, cancelTiming, type LocalTiming } from "@/lib/performance";
 import { shouldPauseModelStartup, clearModelLoadState } from "@/lib/model-startup";
 import { useConversationHistory } from "@/lib/use-conversation-history";
 import { historyMessage, HISTORY_CACHE_KEY, type HistoryMessage, type HistoryConversation } from "@/lib/chat-history";
@@ -104,6 +106,12 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pixiAppRef = useRef<any>(null);
   const modelRef = useRef<any>(null);
+  const modelPresentationRef = useRef<{ model: NonNullable<typeof modelRef.current>; dispose: () => void } | null>(null);
+  const modelRenderAbortRef = useRef<AbortController | null>(null);
+  const [backgroundReady, setBackgroundReady] = useState(false);
+  const modelSelectionAbortRef = useRef<AbortController | null>(null);
+  const modelSelectionTimingRef = useRef<LocalTiming | undefined>(undefined);
+  const startupTimingRef = useRef<LocalTiming | undefined>(undefined);
   const modelRestStateRef = useRef<ModelRestState | null>(null);
   const modelLoadIdRef = useRef(0);
   const expressionActionRef = useRef(0);
@@ -202,7 +210,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   const [editingMemoryId, setEditingMemoryId] = useState<number | null>(null);
   const [memoryDraft, setMemoryDraft] = useState("");
   const [backgroundMode, setBackgroundMode] = useState<keyof typeof BACKGROUNDS>("day");
-  const sceneLibrary = useSceneLibrary(PRESET_SCENE_IMAGES, accountId);
+  const sceneLibrary = useSceneLibrary(PRESET_SCENE_IMAGES, accountId, backgroundReady);
   const activeCustomSceneId = sceneLibrary.preferences.activeSceneId;
   const selectedPreset = sceneLibrary.preferences.preset ?? backgroundMode;
   const { speed: speechSpeed, save: setSpeechSpeed, notice: voiceSpeedNotice, refresh: refreshVoiceSpeed } = useVoicePreferences();
@@ -252,10 +260,20 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
-    const cloudRequest = getCloudModels(AbortSignal.any([controller.signal, AbortSignal.timeout(12_000)])).catch(() => null);
+    const localRequest = loadModelCatalog().catch(() => [] as ModelPackage[]);
+    let cancelCloudStart: (() => void) | undefined;
+    const cloudRequest = localRequest.then((local) => new Promise<CloudLibrary | null>((resolve) => {
+      const start = () => {
+        if (controller.signal.aborted) { resolve(null); return; }
+        void getCloudModels(AbortSignal.any([controller.signal, AbortSignal.timeout(12_000)])).then(resolve, () => resolve(null));
+      };
+      if (local.some((pack) => !pack.cloudOwner || pack.cloudOwner === accountId)) cancelCloudStart = scheduleBackgroundWork(start);
+      else start(); // A cloud-only active model remains critical work.
+      controller.signal.addEventListener("abort", () => resolve(null), { once: true });
+    }));
     modelCloudRequestRef.current = cloudRequest;
     void (async () => {
-      const local = await loadModelCatalog().catch(() => [] as ModelPackage[]);
+      const local = await localRequest;
       if (cancelled) return;
       const packages = local.filter((pack) => !pack.cloudOwner || pack.cloudOwner === accountId);
       const saved = localStorage.getItem("vivian-local-model");
@@ -296,7 +314,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     })().catch(() => {
       if (!cancelled) setModelNotice("Model storage is unavailable. Please try again.");
     }).finally(() => { if (!cancelled) setModelsReady(true); });
-    return () => { cancelled = true; controller.abort(); };
+    return () => { cancelled = true; cancelCloudStart?.(); controller.abort(); };
   }, [accountId]);
 
   useEffect(() => {
@@ -359,29 +377,29 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     if (modelImporting) return;
     const pack = modelPackages.find((entry) => entry.models.some((model) => model.id === id));
     if (!pack) return;
-    const wasPaused = modelPaused;
-    setModelImporting(true);
-    setModelPaused(true);
-    setModelNotice(null);
+    modelSelectionAbortRef.current?.abort();
+    const abort = new AbortController(); modelSelectionAbortRef.current = abort;
+    cancelTiming(modelSelectionTimingRef.current);
+    modelSelectionTimingRef.current = startTiming("model_select_to_first_frame");
+    // Cancel pending render preparation immediately, while retaining its predecessor.
+    modelLoadIdRef.current++;
+    modelRenderAbortRef.current?.abort();
+    setModelNotice("Loading model files…");
     try {
-      // Release the current GPU model before hydrating another package, and
-      // validate even in-memory Blob handles after a Safari reload.
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      setModelNotice("Loading model files…");
-      const downloaded = await availableModelPackage(pack, cloudLibrary ?? modelCloudRequestRef.current);
+      const downloaded = await availableModelPackage(pack, cloudLibrary ?? modelCloudRequestRef.current, abort.signal);
+      abort.signal.throwIfAborted();
       if (!downloaded) throw new Error("Model files are unavailable.");
       if (!downloaded.models.some((model) => model.id === id)) throw new Error("This model is no longer in the package. Select another model.");
-      // Local originals are already saved; cloud recovery persists its copy once.
       setModelPackages((current) => current.map((entry) => entry.id === pack.id ? downloaded : modelCatalogEntry(entry)));
       setActiveModelId(id);
       setModelNotice(null);
-      // Crash recovery pauses automatic startup only. An explicit selection
-      // must resume rendering, including choosing the same model to retry.
       setModelPaused(false);
+      setModelReload((value) => value + 1);
     } catch (error) {
+      if (abort.signal.aborted) return;
+      cancelTiming(modelSelectionTimingRef.current);
       setModelNotice(error instanceof Error ? error.message : "Could not load model.");
-      setModelPaused(wasPaused);
-    } finally { setModelImporting(false); }
+    } finally { if (modelSelectionAbortRef.current === abort) modelSelectionAbortRef.current = null; }
   }
 
   async function removeActiveModel() {
@@ -524,8 +542,8 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   }, []);
 
   useEffect(() => {
-    // Warm every scene into the browser cache before the first reaction can
-    // request a swap. This prevents a network fetch from delaying the fade.
+    startupTimingRef.current = startTiming("page_load_to_model_first_frame", 0);
+    return scheduleBackgroundWork(() => setBackgroundReady(true));
   }, []);
 
   useEffect(() => {
@@ -538,11 +556,12 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       }
     };
     window.addEventListener("pointerdown", unlock, { once: true });
-    void loadMemory();
+    const cancelMemory = scheduleBackgroundWork(() => { void loadMemory(); });
     const idleTimer = window.setInterval(() => { void maybeIdleGreeting(); }, 12000);
     const onVisible = () => { lastActivityRef.current = Date.now(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
+      cancelMemory();
       window.removeEventListener("pointerdown", unlock);
       window.clearInterval(idleTimer);
       document.removeEventListener("visibilitychange", onVisible);
@@ -553,10 +572,15 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     if (!preferencesReady || !modelsReady || graphicsLost || modelPaused) return;
     setActiveExpression(null);
     setActiveMotion(null);
-    if (!activeModel || !activePackage) { setModelStatus("empty"); return; }
+    if (!activeModel || !activePackage) {
+      modelPresentationRef.current?.dispose(); modelPresentationRef.current = null;
+      modelRef.current = null; modelRestStateRef.current = null;
+      setModelStatus("empty"); return;
+    }
     setModelStatus("loading");
     setTextureSummary(null);
     const textureAbort = new AbortController();
+    modelRenderAbortRef.current = textureAbort;
     let releaseResources: (() => void) | undefined;
     let app: any;
     let resizeModel = () => {};
@@ -566,6 +590,8 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     let resizeTimeout: number | undefined;
     let disposed = false;
     let ownedModel: any;
+    let promoted = false;
+    let renderTiming: LocalTiming | undefined;
     const loadId = ++modelLoadIdRef.current;
     const clearBreadcrumb = () => {
       if (loadId !== modelLoadIdRef.current) return;
@@ -604,13 +630,6 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
           app.ticker.maxFPS = isAppleMobile ? 30 : 60;
           pixiAppRef.current = app;
         }
-        const previousModel = modelRef.current;
-        if (previousModel) {
-          app.stage.removeChild(previousModel);
-          previousModel.destroy({ children: true, texture: true, baseTexture: true });
-          modelRef.current = null;
-          modelRestStateRef.current = null;
-        }
         const maxTextureSize = app.renderer.gl.getParameter(app.renderer.gl.MAX_TEXTURE_SIZE) as number;
         canvasRef.current.dataset.gpuTextureLimit = String(maxTextureSize);
         const mobileDevice = isAppleMobile || /Android|Mobile/i.test(navigator.userAgent);
@@ -628,6 +647,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         }
         const renderModel = renderPackage.models.find((entry) => entry.id === activeModel.id || entry.manifestPath === activeModel.manifestPath);
         if (!renderModel) throw new Error("Model selection has changed. Please select the model again.");
+        renderTiming = startTiming("model_load_to_first_frame");
         const resources = await createModelResources(renderPackage, renderModel, {
           // GPU limits alone do not account for framebuffers, decoded images,
           // Cubism masks and the rest of the page. Leave room for those too.
@@ -637,7 +657,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
           signal: textureAbort.signal,
         });
         releaseResources = resources.dispose;
-        if (disposed) { resources.dispose(); return; }
+        if (disposed || loadId !== modelLoadIdRef.current) { resources.dispose(); return; }
         const settings = new Cubism4ModelSettings(resources.manifest);
         settings.resolveURL = resources.resolve;
         const model = await Live2DModel.from(settings, { autoInteract: false });
@@ -656,8 +676,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
           texture.baseTexture.mipmap = PIXI.MIPMAP_MODES.OFF;
           texture.baseTexture.wrapMode = PIXI.WRAP_MODES.CLAMP;
         }
-        modelRestStateRef.current = captureModelRestState(model.internalModel.coreModel as CubismRestModel);
-        modelRef.current = model;
+        const restState = captureModelRestState(model.internalModel.coreModel as CubismRestModel);
         if (resources.texturePlan.some((plan) => plan.source.width !== plan.render.width || plan.source.height !== plan.render.height)) {
           const source = Math.max(...resources.texturePlan.flatMap((plan) => [plan.source.width, plan.source.height]));
           const render = Math.max(...resources.texturePlan.flatMap((plan) => [plan.render.width, plan.render.height]));
@@ -693,8 +712,31 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         queueResize();
         // If the artist did not supply a thumbnail, capture the rendered model.
         resizeModel();
-        app.renderer.render(app.stage);
+        textureAbort.signal.throwIfAborted();
+        if (loadId !== modelLoadIdRef.current) throw new DOMException("Superseded model", "AbortError");
+        const previous = modelPresentationRef.current;
+        if (previous) previous.model.visible = false;
+        try { app.renderer.render(app.stage); }
+        catch (error) { if (previous) previous.model.visible = true; throw error; }
         if (app.renderer.gl.isContextLost()) throw new Error("Graphics memory is unavailable. Try Auto texture quality and reload the model.");
+        modelRef.current = model;
+        modelRestStateRef.current = restState;
+        modelPresentationRef.current = { model, dispose: () => {
+          if (resizeFrame) cancelAnimationFrame(resizeFrame);
+          if (resizeTimeout) window.clearTimeout(resizeTimeout);
+          window.removeEventListener("resize", queueResize);
+          window.removeEventListener("orientationchange", handleOrientationChange);
+          window.visualViewport?.removeEventListener("resize", queueResize);
+          app.stage.removeChild(model);
+          model.destroy({ children: true, texture: true, baseTexture: true });
+          resources.dispose();
+        } };
+        promoted = true;
+        previous?.dispose();
+        finishTiming(renderTiming);
+        finishTiming(modelSelectionTimingRef.current);
+        finishTiming(startupTimingRef.current);
+        window.dispatchEvent(new Event("vivian-model-first-frame"));
         setModelStatus("ready");
         clearRecovery();
         if (!activeModel.previewPath) {
@@ -722,42 +764,51 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         window.visualViewport?.addEventListener("resize", queueResize);
       } catch (error) {
         clearRecovery();
-        if (ownedModel) {
+        cancelTiming(renderTiming);
+        if (!disposed && loadId === modelLoadIdRef.current) cancelTiming(modelSelectionTimingRef.current);
+        if (modelPresentationRef.current && !promoted) {
+          modelPresentationRef.current.model.visible = true;
+          if (!app?.renderer.gl.isContextLost()) app?.renderer.render(app.stage);
+        }
+        if (ownedModel && !promoted) {
           app?.stage.removeChild(ownedModel);
           ownedModel.destroy({ children: true, texture: true, baseTexture: true });
           if (modelRef.current === ownedModel) { modelRef.current = null; modelRestStateRef.current = null; }
           ownedModel = undefined;
         }
-        if (!disposed) {
+        if (!disposed && loadId === modelLoadIdRef.current) {
           console.error("Live2D failed to load", error);
           setModelStatus("error");
           setModelNotice(error instanceof Error ? error.message : "Could not render this model. Check that it is compatible with Cubism 4 and includes all assets.");
         }
-        releaseResources?.();
+        if (!promoted) releaseResources?.();
       }
     })();
     return () => {
       disposed = true;
       textureAbort.abort();
+      if (modelRenderAbortRef.current === textureAbort) modelRenderAbortRef.current = null;
       clearBreadcrumb();
       modelLoadIdRef.current += 1;
-      if (resizeFrame) cancelAnimationFrame(resizeFrame);
-      if (resizeTimeout) window.clearTimeout(resizeTimeout);
       window.removeEventListener("pagehide", clearRecovery);
-      window.removeEventListener("resize", queueResize);
-      window.removeEventListener("orientationchange", handleOrientationChange);
-      window.visualViewport?.removeEventListener("resize", queueResize);
-      const currentModel = ownedModel;
-      if (currentModel && app) {
-        app.stage.removeChild(currentModel);
-        currentModel.destroy({ children: true, texture: true, baseTexture: true });
+      if (!promoted) {
+        if (resizeFrame) cancelAnimationFrame(resizeFrame);
+        if (resizeTimeout) window.clearTimeout(resizeTimeout);
+        window.removeEventListener("resize", queueResize);
+        window.removeEventListener("orientationchange", handleOrientationChange);
+        window.visualViewport?.removeEventListener("resize", queueResize);
       }
-      ownedModel = undefined;
-      if (modelRef.current === currentModel) {
-        modelRef.current = null;
-        modelRestStateRef.current = null;
+      cancelTiming(renderTiming);
+      // A promoted model belongs to the stage until its replacement has rendered.
+      // Pending candidates still release all textures/URLs when superseded.
+      if (!promoted) {
+        if (ownedModel && app) {
+          app.stage.removeChild(ownedModel);
+          ownedModel.destroy({ children: true, texture: true, baseTexture: true });
+        }
+        ownedModel = undefined;
+        releaseResources?.();
       }
-      releaseResources?.();
     };
   }, [preferencesReady, modelsReady, activeModel, activePackage, textureQuality, modelReload, graphicsLost, modelPaused]);
 
@@ -786,6 +837,10 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   }, []);
 
   useEffect(() => () => {
+    modelSelectionAbortRef.current?.abort();
+    cancelTiming(modelSelectionTimingRef.current); cancelTiming(startupTimingRef.current);
+    modelPresentationRef.current?.dispose(); modelPresentationRef.current = null;
+    modelRef.current = null; modelRestStateRef.current = null;
     // React owns this canvas; removing it breaks effect replay/remounting.
     pixiAppRef.current?.destroy(false, { children: true });
     pixiAppRef.current = null;

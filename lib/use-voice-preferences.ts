@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { scheduleBackgroundWork } from "@/lib/startup-background";
 import { authFetch } from "@/lib/auth/fetch";
 import { DEFAULT_SPEAKING_SPEED, validSpeakingSpeed } from "@/lib/voice-preferences";
 
@@ -26,12 +27,13 @@ export function useVoicePreferences() {
   }, []);
   useEffect(() => {
     alive.current = true;
-    queueMicrotask(() => { if (alive.current) void refresh(); });
+    const cancelInitial = scheduleBackgroundWork(() => { if (alive.current) void refresh(); });
     const visible = () => { if (document.visibilityState === "visible") void refresh(); };
     window.addEventListener("focus", visible);
     document.addEventListener("visibilitychange", visible);
     const timer = window.setInterval(visible, 15000);
     return () => {
+      cancelInitial();
       alive.current = false;
       window.clearInterval(timer);
       window.removeEventListener("focus", visible);

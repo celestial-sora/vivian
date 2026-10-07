@@ -15,9 +15,10 @@ const effect = ts.transpileModule(source.slice(start, end), { compilerOptions: {
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 const pack = (id, owner) => ({ id, cloudOwner: owner, assets: [], models: [{ id: `${id}:model` }] });
 function startup({ local = [pack('local')], saved = 'local:model', interrupted = {} } = {}) {
-  let finishCloud, cleanup;
+  let finishCloud, cleanup, release;
   const state = { packages: [], active: null, ready: false, paused: false, writes: 0 };
   const bindings = {
+    scheduleBackgroundWork: (work) => { release = work; return () => { release = undefined; }; },
     useEffect: (callback) => { cleanup = callback(); },
     getCloudModels: () => new Promise((resolve) => { finishCloud = resolve; }),
     loadModelCatalog: async () => local,
@@ -34,7 +35,7 @@ function startup({ local = [pack('local')], saved = 'local:model', interrupted =
     cloudModelPlaceholder: (model) => pack(model.id),
   };
   new Function(...Object.keys(bindings), effect)(...Object.values(bindings));
-  return { state, finishCloud: (value) => finishCloud(value), cleanup: () => cleanup() };
+  return { state, finishCloud: (value) => { release?.(); finishCloud?.(value); }, cleanup: () => cleanup() };
 }
 
 test('cached model starts before a stalled cloud catalog and sync preserves hydrated identity', async () => {

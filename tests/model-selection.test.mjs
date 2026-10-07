@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import ts from 'typescript';
+import { startTiming, cancelTiming } from '../lib/performance.ts';
 
 // Execute the actual selection handler with controlled React setters and I/O.
 const source = readFileSync(new URL('../app/companion.tsx', import.meta.url), 'utf8');
@@ -15,8 +16,12 @@ function fixture({ paused = true, assets = [], fail = false, same = false } = {}
   const selected = { id: 'cloud-b', assets, models: [{ id: 'cloud-b:model.model3.json' }] };
   const old = { id: 'cloud-a', assets: [new Blob(['old'])], models: [{ id: 'old' }] };
   const hydrated = same ? selected : { ...selected, assets: [new Blob(['model'])] };
-  const state = { paused, packages: [old, selected], active: 'old', importing: false, calls: [] };
+  const state = { paused, packages: [old, selected], active: 'old', importing: false, calls: [], reloads: 0 };
   const bindings = {
+    AbortController, startTiming, cancelTiming,
+    modelSelectionAbortRef: { current: null }, modelSelectionTimingRef: { current: undefined },
+    modelRenderAbortRef: { current: null }, modelLoadIdRef: { current: 0 },
+    setModelReload: () => { state.reloads++; },
     modelImporting: false, modelPaused: paused, modelPackages: state.packages,
     modelCloudRequestRef: { current: null },
     cloudLibrary: { userId: 'account', models: [{ id: selected.id }] },
@@ -27,7 +32,7 @@ function fixture({ paused = true, assets = [], fail = false, same = false } = {}
     setActiveModelId: (id) => { state.active = id; },
     requestAnimationFrame: (callback) => { state.calls.push('frame'); callback(); },
     availableModelPackage: async (pack, cloud) => {
-      assert.equal(state.paused, true);
+      assert.equal(state.paused, paused);
       assert.equal(pack, selected);
       assert.equal(cloud.userId, 'account');
       state.calls.push('hydrate');
@@ -48,7 +53,7 @@ test('explicit cloud selection resumes rendering after a crash pause and release
   assert.equal(state.paused, false);
   assert.equal(state.importing, false);
   assert.equal(state.notice, null);
-  assert.deepEqual(state.calls, ['frame', 'hydrate']);
+  assert.deepEqual(state.calls, ['hydrate']);
   assert.equal(state.packages[0].assets.length, 0);
   assert.equal(state.packages[1].assets.length, 1);
 });
@@ -58,7 +63,7 @@ test('in-memory selection validates Blob handles and also resumes rendering', as
   await choose(id);
   assert.equal(state.paused, false);
   assert.equal(state.active, id);
-  assert.deepEqual(state.calls, ['frame', 'hydrate']);
+  assert.deepEqual(state.calls, ['hydrate']);
 });
 
 test('failed cloud selection preserves the prior model and pause state', async () => {

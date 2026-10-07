@@ -1,4 +1,5 @@
 "use client";
+import { scheduleBackgroundWork } from "@/lib/startup-background";
 import { useCallback, useEffect, useRef, useReducer, type SetStateAction } from "react";
 import { appendHistory, fetchHistory } from "@/lib/chat-history-client";
 import { HISTORY_ACTIVE_KEY, HISTORY_CACHE_KEY, mergeHistory, normalizeHistory, type HistoryConversation, type HistoryMessage } from "@/lib/chat-history";
@@ -97,7 +98,7 @@ export function useConversationHistory(initial: HistoryMessage, pendingText: str
       const local = state.current.conversations.filter((item) => (!item.cloud && !known.current.has(item.id)) || ids.has(item.id) || item.messages.some((message) => !message.synced && !acknowledged.current.has(message.id!)));
       const merged = mergeHistory(cloud, local);
       setConversations(merged);
-      const active = merged.find((item) => item.id === state.current.activeConversationId) ?? (!state.current.ready ? merged[0] : undefined);
+      const active = merged.find((item) => item.id === state.current.activeConversationId) ?? (!state.current.conversations.length ? merged[0] : undefined);
       if (!state.current.busy && active) {
         setActiveConversationId(active.id);
         setMessages(active.messages.length ? active.messages : [initialRef.current]);
@@ -114,6 +115,7 @@ export function useConversationHistory(initial: HistoryMessage, pendingText: str
   useEffect(() => {
     mounted.current = true;
     const controller = new AbortController();
+    let cancelInitial: (() => void) | undefined;
     queueMicrotask(() => {
       if (controller.signal.aborted) return;
       let cached: HistoryConversation[] = [], selected: string | null = null;
@@ -132,13 +134,14 @@ export function useConversationHistory(initial: HistoryMessage, pendingText: str
       const existing = cached.find((item) => item.id === id);
       if (existing?.messages.length) setMessages(existing.messages);
       cache(cached); // Persist migration UUIDs before any network writes.
-      void refresh(controller.signal);
+      setReady(true); // The local conversation and composer are immediately usable.
+      cancelInitial = scheduleBackgroundWork(() => { void refresh(controller.signal); });
     });
     const retry = () => { void sync().then(() => refresh(controller.signal)); };
     window.addEventListener("online", retry); window.addEventListener("focus", retry);
     const timer = window.setInterval(retry, 30_000);
-    return () => { mounted.current = false; refreshCount.current += 1; refreshing.current = false; controller.abort(); clearInterval(timer); window.removeEventListener("online", retry); window.removeEventListener("focus", retry); };
-  }, [cache, refresh, sync, setConversations, setActiveConversationId, setMessages]);
+    return () => { cancelInitial?.(); mounted.current = false; refreshCount.current += 1; refreshing.current = false; controller.abort(); clearInterval(timer); window.removeEventListener("online", retry); window.removeEventListener("focus", retry); };
+  }, [cache, refresh, sync, setConversations, setActiveConversationId, setMessages, setReady]);
   useEffect(() => {
     if (!ready || !activeConversationId || paused.current) return;
     cache(conversations);
