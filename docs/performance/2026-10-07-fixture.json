@@ -1,0 +1,120 @@
+{
+  "before": {
+    "cachedSceneVisibleMs": 621.5,
+    "coldSceneVisibleMs": 1525.3999999999069,
+    "composerReadyMs": 647.3000000000466,
+    "cache": [
+      {
+        "label": "a-cold",
+        "ms": 2060.8000000000466
+      },
+      {
+        "label": "a-warm",
+        "ms": 1.8000000000465661
+      },
+      {
+        "label": "b-cold",
+        "ms": 1889
+      },
+      {
+        "label": "a-return",
+        "ms": 1972
+      }
+    ],
+    "timings": []
+  },
+  "after": {
+    "cachedSceneVisibleMs": 6.900000000139698,
+    "coldSceneVisibleMs": 9.5,
+    "composerReadyMs": 33.39999999990687,
+    "cache": [
+      {
+        "label": "a-cold",
+        "ms": 2422
+      },
+      {
+        "label": "a-warm",
+        "ms": 3.800000000046566
+      },
+      {
+        "label": "b-cold",
+        "ms": 2325.3000000000466
+      },
+      {
+        "label": "a-return",
+        "ms": 3.699999999953434
+      }
+    ],
+    "timings": [
+      {
+        "name": "vivian:scene_load_to_full_image:1",
+        "duration": 15.899999999906868,
+        "detail": {
+          "cacheHit": false
+        }
+      },
+      {
+        "name": "vivian:scene_click_to_visible:2",
+        "duration": 6.7000000001862645,
+        "detail": {
+          "cacheHit": true,
+          "presentation": "full"
+        }
+      },
+      {
+        "name": "vivian:scene_load_to_full_image:3",
+        "duration": 1,
+        "detail": {
+          "cacheHit": true
+        }
+      },
+      {
+        "name": "vivian:scene_click_to_visible:4",
+        "duration": 7.899999999906868,
+        "detail": {
+          "cacheHit": false,
+          "presentation": "preview"
+        }
+      },
+      {
+        "name": "vivian:scene_load_to_full_image:5",
+        "duration": 913.4000000001397,
+        "detail": {
+          "cacheHit": false
+        }
+      },
+      {
+        "name": "vivian:model_render_package:6",
+        "duration": 2418,
+        "detail": {
+          "cacheHit": false,
+          "resizedAtlases": 1
+        }
+      },
+      {
+        "name": "vivian:model_render_package:7",
+        "duration": 2.7000000001862645,
+        "detail": {
+          "cacheHit": true,
+          "resizedAtlases": 1
+        }
+      },
+      {
+        "name": "vivian:model_render_package:8",
+        "duration": 2324.4000000001397,
+        "detail": {
+          "cacheHit": false,
+          "resizedAtlases": 1
+        }
+      },
+      {
+        "name": "vivian:model_render_package:9",
+        "duration": 2.8999999999068677,
+        "detail": {
+          "cacheHit": true,
+          "resizedAtlases": 1
+        }
+      }
+    ]
+  }
+}

@@ -23,7 +23,9 @@
     "test:history": "node --experimental-strip-types --test tests/chat-history.test.mjs",
     "test:history:integration": "node --test tests/chat-history.integration.test.mjs",
     "test:history:postgres": "node --test tests/chat-history.postgres.test.mjs",
-    "test:voice-preferences": "node --experimental-strip-types --test tests/voice-preferences.test.mjs"
+    "test:voice-preferences": "node --experimental-strip-types --test tests/voice-preferences.test.mjs",
+    "test:performance": "node --experimental-strip-types --test tests/scene-selection.test.mjs tests/model-swap.test.mjs tests/startup-background.test.mjs tests/chat-stream.test.mjs tests/performance.test.mjs tests/voice-performance.test.mjs tests/history-startup.test.mjs",
+    "test:performance:browser": "node tests/performance-browser.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1146.0",
@@ -45,9 +47,11 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.3",
     "fake-indexeddb": "^6.2.4",
+    "playwright": "^1.63.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
