@@ -14,10 +14,10 @@ export function SceneBackground({ source, preview, timing }: { source: string; p
       if (!cancelled) { setLoaded({ source, fade: !cacheHit }); finishTiming(loadTiming, { cacheHit }); }
     }).catch(() => { finishTiming(loadTiming, { cacheHit, failed: true }); });
     return () => { cancelled = true; cancelTiming(loadTiming); };
-  }, [source]);
+  }, [source, timing]);
   useEffect(() => {
     // The target full image/preview/placeholder is in the DOM before this mark.
-    const frame = requestAnimationFrame(() => finishTiming(timing, { cacheHit: fullReady, presentation: fullReady ? "full" : preview ? "preview" : "placeholder" }));
+    const frame = requestAnimationFrame(() => finishTiming(timing, { cacheHit: isSceneImageReady(source), presentation: fullReady ? "full" : preview ? "preview" : "placeholder" }));
     return () => cancelAnimationFrame(frame);
   }, [source, preview, timing, fullReady]);
   return <>

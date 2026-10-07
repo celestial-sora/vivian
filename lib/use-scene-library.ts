@@ -24,7 +24,7 @@ export function useSceneLibrary(presetImages: string[] = noPresetImages, account
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [selectionTiming, setSelectionTiming] = useState<LocalTiming>();
-  const timingRef = useRef<LocalTiming | undefined>(undefined)
+  const timingRef = useRef<LocalTiming | undefined>(undefined);
   const writeQueue = useRef(Promise.resolve());
   const pending = useRef(0);
   const cacheKey = `vivian-scenes:${accountId}`;
@@ -44,15 +44,15 @@ export function useSceneLibrary(presetImages: string[] = noPresetImages, account
   useEffect(() => {
     mounted.current = true;
     queueMicrotask(() => {
-    if (!mounted.current) return;
-    try {
-      const saved = JSON.parse(localStorage.getItem(cacheKey) ?? "null");
-      if (saved && Array.isArray(saved.scenes) && saved.preferences && typeof saved.preferences.autoScene === "boolean") {
-        scenesRef.current = saved.scenes; preferencesRef.current = saved.preferences;
-        setScenes(saved.scenes); setPreferences(saved.preferences); setReady(true);
-      }
-    } catch { /* Optional metadata cache. */ }
-    void refresh().catch((error: Error) => { if (mounted.current) setNotice(error.message); });
+      if (!mounted.current) return;
+      try {
+        const saved = JSON.parse(localStorage.getItem(cacheKey) ?? "null");
+        if (saved && Array.isArray(saved.scenes) && saved.preferences && typeof saved.preferences.autoScene === "boolean") {
+          scenesRef.current = saved.scenes; preferencesRef.current = saved.preferences;
+          setScenes(saved.scenes); setPreferences(saved.preferences); setReady(true);
+        }
+      } catch { /* Optional metadata cache. */ }
+      void refresh().catch((error: Error) => { if (mounted.current) setNotice(error.message); });
     });
     return () => { mounted.current = false; invalidateRequests(); cancelTiming(timingRef.current); };
   }, [refresh, invalidateRequests, cacheKey]);
@@ -60,7 +60,9 @@ export function useSceneLibrary(presetImages: string[] = noPresetImages, account
     if (!backgroundReady) return;
     const abort = new AbortController();
     const active = scenes.find((scene) => scene.id === preferences.activeSceneId);
-    const urls = [...(active ? [active.imageUrl] : []), ...scenes.map((scene) => scene.imageUrl), ...presetImages];
+    const index = scenes.findIndex((scene) => scene.id === preferences.activeSceneId);
+    const upcoming = [...scenes.slice(index + 1), ...scenes.slice(0, Math.max(0, index))].slice(0, 2);
+    const urls = [...(active ? [active.imageUrl] : []), ...presetImages, ...upcoming.map((scene) => scene.imageUrl)];
     void preloadSceneLibrary(urls, abort.signal);
     return () => { abort.abort(); };
   }, [scenes, preferences.activeSceneId, presetImages, backgroundReady]);

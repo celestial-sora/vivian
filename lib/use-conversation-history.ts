@@ -36,6 +36,7 @@ function historyReducer(view: HistoryView, action: HistoryAction): HistoryView {
 }
 export function useConversationHistory(initial: HistoryMessage, pendingText: string, busy: boolean) {
   const initialRef = useRef(initial);
+  const cloudRestoreId = useRef<string | null>(null);
   const [view, dispatch] = useReducer(historyReducer, { messages: [initial], conversations: [], activeConversationId: "", ready: false, notice: null });
   const { messages, conversations, activeConversationId, ready, notice } = view;
   const setMessages = useCallback((value: SetStateAction<HistoryMessage[]>) => dispatch({ kind: "messages", value, pendingText }), [pendingText]);
@@ -98,7 +99,11 @@ export function useConversationHistory(initial: HistoryMessage, pendingText: str
       const local = state.current.conversations.filter((item) => (!item.cloud && !known.current.has(item.id)) || ids.has(item.id) || item.messages.some((message) => !message.synced && !acknowledged.current.has(message.id!)));
       const merged = mergeHistory(cloud, local);
       setConversations(merged);
-      const active = merged.find((item) => item.id === state.current.activeConversationId) ?? (!state.current.conversations.length ? merged[0] : undefined);
+      // A pristine device can restore the latest cloud thread after its local
+      // composer becomes ready. Explicit navigation or a user turn wins.
+      const restoreInitial = cloudRestoreId.current === state.current.activeConversationId && !state.current.messages.some((message) => message.from === "me");
+      const active = (restoreInitial ? cloud[0] : undefined) ?? merged.find((item) => item.id === state.current.activeConversationId);
+      cloudRestoreId.current = null;
       if (!state.current.busy && active) {
         setActiveConversationId(active.id);
         setMessages(active.messages.length ? active.messages : [initialRef.current]);
@@ -128,6 +133,7 @@ export function useConversationHistory(initial: HistoryMessage, pendingText: str
         cached.forEach((item) => { if (item.cloud) known.current.add(item.id); item.messages.forEach((message) => { if (message.synced) acknowledged.current.add(message.id!); }); });
       } catch { /* Corrupt caches must not block chat. */ }
       const id = selected ?? crypto.randomUUID();
+      cloudRestoreId.current = selected ? null : id;
       state.current.conversations = cached;
       state.current.activeConversationId = id;
       setConversations(cached); setActiveConversationId(id);

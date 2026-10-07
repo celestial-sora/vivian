@@ -4,9 +4,9 @@ import { loadSceneModule } from './scene-module-loader.mjs';
 function fixture() {
   const window = new EventTarget(), timers = new Map(), frames = new Map(); let id = 0;
   Object.assign(window, { setTimeout(fn) { timers.set(++id, fn); return id; }, clearTimeout(key) { timers.delete(key); } });
-  const module = loadSceneModule('../lib/startup-background.ts', {}, { window, requestAnimationFrame(fn) { frames.set(++id, fn); return id; }, cancelAnimationFrame(key) { frames.delete(key); } });
+  const loaded = loadSceneModule('../lib/startup-background.ts', {}, { window, requestAnimationFrame(fn) { frames.set(++id, fn); return id; }, cancelAnimationFrame(key) { frames.delete(key); } });
   const drain = map => { const pending = [...map.values()]; map.clear(); pending.forEach(fn => fn()); };
-  return { ...module, window, timers, frame: () => drain(frames), timeout: () => drain(timers) };
+  return { ...loaded, window, timers, frame: () => drain(frames), timeout: () => drain(timers) };
 }
 test('optional work waits for first model frame and gives paint two frames before starting once', () => {
   const f = fixture(); let runs = 0;

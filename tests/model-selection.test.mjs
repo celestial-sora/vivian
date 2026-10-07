@@ -21,6 +21,7 @@ function fixture({ paused = true, assets = [], fail = false, same = false } = {}
     AbortController, startTiming, cancelTiming,
     modelSelectionAbortRef: { current: null }, modelSelectionTimingRef: { current: undefined },
     modelRenderAbortRef: { current: null }, modelLoadIdRef: { current: 0 },
+    modelRef: { current: {} }, setModelStatus() {},
     setModelReload: () => { state.reloads++; },
     modelImporting: false, modelPaused: paused, modelPackages: state.packages,
     modelCloudRequestRef: { current: null },

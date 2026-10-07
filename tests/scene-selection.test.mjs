@@ -10,14 +10,14 @@ function fixture() {
     useCallback(fn) { return fn; }, useEffect(fn) { effects.push(fn); },
   };
   const cached = { scenes: [{ id: 'a', imageUrl: '/a', thumbnailUrl: '/a-thumb' }, { id: 'b', imageUrl: '/b' }], preferences: { autoScene: false, activeSceneId: 'a', preset: null, revision: '1' } };
-  const module = loadSceneModule('../lib/use-scene-library.ts', {
+  const loaded = loadSceneModule('../lib/use-scene-library.ts', {
     react: hooks,
     '@/lib/auth/fetch': { authFetch: (path, options) => { calls.push({ path, options }); return new Promise((resolve) => requests.push(resolve)); } },
     '@/lib/storage-status': { notifyStorageChanged() {} },
     '@/lib/scene-preload': { preloadSceneLibrary: async () => {} },
     '@/lib/performance': { startTiming: () => ({}), cancelTiming() {} },
   }, { queueMicrotask, localStorage: { getItem: () => JSON.stringify(cached), setItem() {} } });
-  const library = module.useSceneLibrary();
+  const library = loaded.useSceneLibrary();
   const cleanup = effects[0]();
   return { library, states, calls, requests, cleanup };
 }

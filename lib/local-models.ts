@@ -163,32 +163,34 @@ export async function createModelResources(pack: ModelPackage, model: LocalModel
   const renderCopies = new Map<string, Blob>();
   let texturePlan: TexturePlan[] = [];
   if (budget) {
-    const { readTextureSize, planTextures, resizeTexture } = await import("./model-textures.ts");
-    const { loadRenderCopies, saveRenderCopies } = await import("./model-render-cache.ts");
-    const textures = manifest.FileReferences.Textures.map((ref) => {
-      const path = resolveAsset(model.manifestPath, ref);
-      const file = pack.assets.find((item) => item.path === path);
-      if (!file) throw new Error(`Missing texture: ${path}`);
-      return file;
-    });
-    const sizes = [];
-    for (const texture of textures) { budget.signal?.throwIfAborted(); sizes.push(await readTextureSize(texture.blob)); }
-    texturePlan = planTextures(sizes, budget);
     const preparationTiming = startTiming("model_render_package");
-    const cacheKey = JSON.stringify(["area-v2", pack.id, pack.renderRevision ?? "legacy", model.manifestPath, Boolean(budget.original), budget.maxDimension, budget.budgetBytes, textures.map((texture, index) => [texture.path, texture.blob.size, texturePlan[index]])]);
-    const cached = texturePlan.some((plan) => plan.source.width !== plan.render.width || plan.source.height !== plan.render.height)
-      ? await loadRenderCopies(cacheKey) : undefined;
-    for (let index = 0; index < textures.length; index++) {
-      budget.signal?.throwIfAborted();
-      const plan = texturePlan[index];
-      if (plan.source.width !== plan.render.width || plan.source.height !== plan.render.height) {
-        renderCopies.set(textures[index].path, cached?.get(textures[index].path) ?? await resizeTexture(textures[index].blob, plan.render, budget.signal));
+    try {
+      const { readTextureSize, planTextures, resizeTexture } = await import("./model-textures.ts");
+      const { loadRenderCopies, saveRenderCopies } = await import("./model-render-cache.ts");
+      const textures = manifest.FileReferences.Textures.map((ref) => {
+        const path = resolveAsset(model.manifestPath, ref);
+        const file = pack.assets.find((item) => item.path === path);
+        if (!file) throw new Error(`Missing texture: ${path}`);
+        return file;
+      });
+      const sizes = [];
+      for (const texture of textures) { budget.signal?.throwIfAborted(); sizes.push(await readTextureSize(texture.blob)); }
+      texturePlan = planTextures(sizes, budget);
+      const cacheKey = JSON.stringify(["area-v2", pack.id, pack.renderRevision ?? "legacy", model.manifestPath, Boolean(budget.original), budget.maxDimension, budget.budgetBytes, textures.map((texture, index) => [texture.path, texture.blob.size, texturePlan[index]])]);
+      const cached = texturePlan.some((plan) => plan.source.width !== plan.render.width || plan.source.height !== plan.render.height)
+        ? await loadRenderCopies(cacheKey) : undefined;
+      for (let index = 0; index < textures.length; index++) {
+        budget.signal?.throwIfAborted();
+        const plan = texturePlan[index];
+        if (plan.source.width !== plan.render.width || plan.source.height !== plan.render.height) {
+          renderCopies.set(textures[index].path, cached?.get(textures[index].path) ?? await resizeTexture(textures[index].blob, plan.render, budget.signal));
+        }
       }
-    }
-    budget.signal?.throwIfAborted();
-    if (!cached) void saveRenderCopies(cacheKey, renderCopies);
-    finishTiming(preparationTiming, { cacheHit: Boolean(cached), resizedAtlases: renderCopies.size });
-    budget.signal?.throwIfAborted();
+      budget.signal?.throwIfAborted();
+      if (!cached) void saveRenderCopies(cacheKey, renderCopies);
+      finishTiming(preparationTiming, { cacheHit: Boolean(cached), resizedAtlases: renderCopies.size });
+      budget.signal?.throwIfAborted();
+    } catch (error) { finishTiming(preparationTiming, { failed: true }); throw error; }
   }
   const urls = new Map<string, string>();
   let disposed = false;

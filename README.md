@@ -105,6 +105,8 @@ npx tsc --noEmit
 npm run build
 ```
 
+Performance checks: `npm run test:performance` and `npm run test:performance:browser`. See [Performance Sprint measurements and timing guide](docs/performance-sprint.md) for the reproducible before/after fixture, local User Timing entries, cache limits and device verification. Scenes display optimistically, and model swaps retain the prior stage until the new first frame. Web chat opts into timing-only NDJSON events with `Accept: application/x-ndjson`; existing JSON API clients keep their response contract.
+
 Run feature tests with scripts such as `npm run test:auth`, `npm run test:jev`, `npm run test:models`, `npm run test:scenes`, and `npm run test:storage`. Some integration tests need local fixtures or PostgreSQL; check the relevant docs first. Do not point tests at production data.
 
 ## Project folders
