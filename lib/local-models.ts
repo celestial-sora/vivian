@@ -172,7 +172,7 @@ export async function importModelFiles(files: File[]): Promise<ModelPackage> {
   if (files.length === 1 && archive === "rar") {
     const { extractModelRar } = await import("./model-rar.ts");
     const extracted = await extractModelRar(files[0], MAX_BYTES, MAX_FILES);
-    assets = extracted.map((asset) => ({ path: asset.path, blob: new Blob([asset.blob], { type: mime(asset.path) }) }));
+    assets = extracted.map((asset) => ({ path: asset.path, blob: new Blob([Uint8Array.from(asset.blob).buffer], { type: mime(asset.path) }) }));
   } else {
     assets = files.map((file) => ({ path: file.webkitRelativePath || file.name, blob: file }));
   }
