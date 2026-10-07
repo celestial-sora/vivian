@@ -21,7 +21,8 @@
     "test:scenes:integration": "node --test tests/scenes.integration.test.mjs",
     "test:history": "node --experimental-strip-types --test tests/chat-history.test.mjs",
     "test:history:integration": "node --test tests/chat-history.integration.test.mjs",
-    "test:history:postgres": "node --test tests/chat-history.postgres.test.mjs"
+    "test:history:postgres": "node --test tests/chat-history.postgres.test.mjs",
+    "postinstall": "node scripts/copy-unrar-wasm.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1146.0",
@@ -36,7 +37,8 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "0.0.1",
-    "sharp": "0.35.4"
+    "sharp": "0.35.4",
+    "node-unrar-js": "2.0.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
