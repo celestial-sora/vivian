@@ -54,7 +54,7 @@ Keep row-level security (RLS) enabled on Supabase memory tables, with no public 
 - **Remember:** Keeps durable relationship-relevant details and mood state. Secrets and sensitive one-off details aren’t saved automatically.
 - **Know things:** Search, Bangkok time/weather, calculation, and memory tools can give Vivian context. Tool results are knowledge, not an obligation to tell you the answer.
 - **See pictures:** Send an image or camera frame for Gemini to understand.
-- **Talk:** Groq Whisper handles speech input; Fish Audio makes speech output. Vivian’s avatar lip-syncs while she talks. If voice or Live2D has a bad hair day, text chat still works.
+- **Talk:** ElevenLabs Scribe v2 handles speech input (set `ELEVENLABS_API_KEY`); the mic waits for 2.5 seconds of silence before sending; Fish Audio makes speech output. Vivian’s avatar lip-syncs while she talks. If voice or Live2D has a bad hair day, text chat still works.
 - **Chat in your language:** Automatic, Thai, English, Japanese, Korean, and Chinese.
 - **Set the scene:** Add your own labeled backgrounds. Scene images stay private and aren’t analyzed by AI.
 

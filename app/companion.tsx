@@ -15,6 +15,7 @@ import { useSceneLibrary } from "@/lib/use-scene-library";
 import { SceneManager } from "@/app/components/scene-manager";
 import { SceneBackground } from "@/app/components/scene-background";
 import { StorageStatusPanel } from "@/app/components/storage-status";
+import { createVoiceActivity, updateVoiceActivity, type VoiceActivityState } from "@/lib/voice-activity";
 import type { SceneDecision } from "@/lib/scenes";
 
 async function availableModelPackage(pack: ModelPackage, cloud: CloudLibrary | null, signal?: AbortSignal): Promise<ModelPackage | undefined> {
@@ -65,7 +66,7 @@ const CHAT_TIMEOUT_MS = 35000;
 // The server aborts Fish at 14 seconds. Give the response a small transport
 // margin, then always release the sending state instead of leaving "Thinking".
 const TTS_TIMEOUT_MS = 17000;
-const STT_TIMEOUT_MS = 20000;
+const STT_TIMEOUT_MS = 28000;
 const AUDIO_UNLOCK_MS = 1200;
 const PLAYBACK_START_MS = 2500;
 const AUDIO_SYNC_SETTLE_MS = 140;
@@ -104,6 +105,8 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recordingStartedAtRef = useRef(0);
+  const voiceContextRef = useRef<AudioContext | null>(null);
+  const voiceActivityRef = useRef<VoiceActivityState | null>(null);
   const voiceAnalyserRef = useRef<AnalyserNode | null>(null);
   const voiceSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const voiceMonitorRef = useRef<number | null>(null);
@@ -1221,15 +1224,25 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       const recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: 128000 });
       recorder.ondataavailable = (event) => event.data.size && chunks.push(event.data);
       recorder.onstop = async () => {
+        // Automatic rearming waits for Vivian to finish, and never survives reset.
+        const resumeListening = () => {
+          if (generation !== memoryGenerationRef.current || resettingRef.current || !micEnabledRef.current || recordingRef.current) return;
+          if (speakingRef.current || sendingRef.current) {
+            window.setTimeout(resumeListening, 250);
+            return;
+          }
+          void startRecording();
+        };
         if (generation !== memoryGenerationRef.current) { recorderRef.current = null; streamRef.current = null; return; }
         const durationMs = Date.now() - recordingStartedAtRef.current;
         const actualMimeType = recorder.mimeType || mimeType || "audio/webm";
         const extension = actualMimeType.includes("mp4") ? "m4a" : "webm";
-        if (durationMs < MIN_RECORDING_MS || !chunks.length) {
+        if (durationMs < MIN_RECORDING_MS || !chunks.length || (voiceActivityRef.current && !voiceActivityRef.current.heardSpeech)) {
           setSttPreview("ยังไม่มีเสียงที่ชัดพอค่ะ");
           window.setTimeout(() => setSttPreview(null), 2500);
           recorderRef.current = null;
           streamRef.current = null;
+          window.setTimeout(resumeListening, 250);
           return;
         }
         const form = new FormData();
@@ -1252,20 +1265,10 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         } finally {
           recorderRef.current = null;
           streamRef.current = null;
-          // Do not restart the mic while Vivian is speaking. startRecording
-          // intentionally stops active speech for a manual barge-in, so an
-          // automatic STT restart must wait until the current TTS is ended.
-          const resumeListening = () => {
-            if (!micEnabledRef.current || recordingRef.current) return;
-            if (speakingRef.current || sendingRef.current) {
-              window.setTimeout(resumeListening, 250);
-              return;
-            }
-            void startRecording();
-          };
           window.setTimeout(resumeListening, 250);
         }
       };
+      voiceActivityRef.current = null;
       recorder.start();
       recorderRef.current = recorder;
       streamRef.current = stream;
@@ -1277,6 +1280,8 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (AudioContextClass) {
         const voiceContext = new AudioContextClass();
+        voiceContextRef.current = voiceContext;
+        void voiceContext.resume().catch(() => {});
         const analyser = voiceContext.createAnalyser();
         analyser.fftSize = 512;
         analyser.smoothingTimeConstant = .75;
@@ -1284,35 +1289,15 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         voiceSourceRef.current.connect(analyser);
         voiceAnalyserRef.current = analyser;
         const samples = new Uint8Array(analyser.fftSize);
-        let heardSpeech = false;
-        let speechStartedAt = 0;
-        let quietSince = 0;
-        let noiseFloor = 0;
-        const noiseCalibrationEndsAt = Date.now() + 700;
+        const activity = createVoiceActivity();
+        voiceActivityRef.current = activity;
         const monitor = () => {
           if (!recordingRef.current || recorderRef.current !== recorder) return;
           analyser.getByteTimeDomainData(samples);
           let sum = 0;
           for (const sample of samples) { const delta = sample - 128; sum += delta * delta; }
           const rms = Math.sqrt(sum / samples.length) / 128;
-          if (Date.now() < noiseCalibrationEndsAt) {
-            noiseFloor = noiseFloor ? noiseFloor * .88 + rms * .12 : rms;
-            voiceMonitorRef.current = requestAnimationFrame(monitor);
-            return;
-          }
-          // Adapt to fans, music and room noise. The floor is allowed to rise
-          // slowly, but a real voice must still clear a meaningful margin.
-          noiseFloor = noiseFloor * .995 + rms * .005;
-          const speechThreshold = Math.max(.065, Math.min(.18, noiseFloor * 2.8 + .018));
-          if (rms > speechThreshold) {
-            speechStartedAt ||= Date.now();
-            if (Date.now() - speechStartedAt >= 380) heardSpeech = true;
-            quietSince = 0;
-          }
-          else if (heardSpeech) {
-            quietSince ||= Date.now();
-            if (Date.now() - quietSince > 900) { stopRecording(); return; }
-          } else if (Date.now() - speechStartedAt > 500) speechStartedAt = 0;
+          if (updateVoiceActivity(activity, rms, Date.now())) { stopRecording(); return; }
           voiceMonitorRef.current = requestAnimationFrame(monitor);
         };
         voiceMonitorRef.current = requestAnimationFrame(monitor);
@@ -1332,6 +1317,8 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     voiceSourceRef.current?.disconnect();
     voiceSourceRef.current = null;
     voiceAnalyserRef.current = null;
+    void voiceContextRef.current?.close().catch(() => {});
+    voiceContextRef.current = null;
     recordingRef.current = false;
     setRecording(false);
   }

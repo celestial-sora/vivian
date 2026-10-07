@@ -10,6 +10,7 @@
     "test:persona": "node --test tests/persona.test.mjs",
     "test:jev": "node --experimental-strip-types --test tests/jev.test.mjs",
     "test:reset": "node --experimental-strip-types --test tests/reset-companion.test.mjs",
+    "test:stt": "node --experimental-strip-types --test tests/stt.test.mjs tests/voice-activity.test.mjs",
     "test:speech": "node --experimental-strip-types --test tests/speech.test.mjs",
     "test:companion": "node --experimental-strip-types --test tests/companion.test.mjs",
     "test:auth": "node --experimental-strip-types --test tests/auth-policy.test.mjs",
