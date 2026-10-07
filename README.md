@@ -55,6 +55,7 @@ Keep row-level security (RLS) enabled on Supabase memory tables, with no public 
 - **Know things:** Search, Bangkok time/weather, calculation, and memory tools can give Vivian context. Tool results are knowledge, not an obligation to tell you the answer.
 - **See pictures:** Send an image or camera frame for Gemini to understand.
 - **Talk:** ElevenLabs Scribe v2 handles speech input (set `ELEVENLABS_API_KEY`); the mic waits for 2.5 seconds of silence before sending; Fish Audio makes speech output. Vivian’s avatar lip-syncs while she talks. If voice or Live2D has a bad hair day, text chat still works.
+- **Personality:** Vivian uses a compiled hersona `tsundere / strong` persona across dialogue providers. She can refuse ordinary questions, including introductions, without revealing the answer in the same turn. Custom instructions adjust her conversation preferences and apply to the next text or microphone turn.
 - **Chat in your language:** Automatic, Thai, English, Japanese, Korean, and Chinese.
 - **Set the scene:** Add your own labeled backgrounds. Scene images stay private and aren’t analyzed by AI.
 

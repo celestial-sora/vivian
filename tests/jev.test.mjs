@@ -31,6 +31,8 @@ const harness = load("../lib/chat-decision.ts", { "@/lib/tools": tools, "@/lib/j
 const companion = load("../lib/companion.ts");
 const story = load("../lib/vivian-story.ts");
 const dialogue = load("../lib/vivian-dialogue.ts");
+const hersonaExport = JSON.parse(readFileSync(new URL("../lib/persona/hersona/tsundere-strong.json", import.meta.url), "utf8"));
+const persona = load("../lib/vivian-persona.ts", { "@/lib/persona/hersona/tsundere-strong.json": {default:hersonaExport} });
 const keys = ["needs_current_information", "needs_memory", "recalls_memory", "needs_vision", "needs_time", "needs_weather", "needs_calculator", "needs_integrations", "supportive_response", "explanatory_response"];
 function answers(values = {}) {
   return { answers: Object.fromEntries(keys.map((key) => [key, { type: "noul", noul: values[key] ?? (key === "needs_memory" ? 0.5 : 0.01) }])) };
@@ -241,6 +243,7 @@ function chatFixture({ values, jevFetch, env = {}, denied = null, groqReply, cer
     "@/lib/companion": companion,
     "@/lib/vivian-story": story,
     "@/lib/vivian-dialogue": dialogue,
+    "@/lib/vivian-persona": persona,
     "@/lib/companion-store": { loadCompanionState: async () => { calls.push({ kind: "state" }); return companion.defaultCompanionState(); }, saveCompanionState: () => assert.fail("Background writes must not run in fixtures") },
     "@/lib/supabase-admin": { getSupabaseAdmin() {
       return { from(table) {
@@ -513,5 +516,37 @@ test("scene context or execution/storage failure cannot prevent normal chat from
     assert.equal(response.status, 200);
     assert.equal(body.text, "Vivian fixture reply");
     assert.equal(body.scene.change, false);
+  }
+});
+
+
+test("compiled hersona strong and latest custom instructions reach all dialogue providers", async () => {
+  const customInstructions = "เรียกฉันว่าโซระ และปากแข็งไม่บอกชื่อ";
+  for (const [provider, options] of [
+    ["groq", {}],
+    ["cerebras", { groqReply: async () => new Response("offline", {status:503}), env:{CEREBRAS_API_KEY:"fixture-cerebras"} }],
+    ["gemini", { env:{GROQ_API_KEY:"", CEREBRAS_API_KEY:""} }],
+  ]) {
+    const fixture=chatFixture(options);
+    assert.equal((await fixture.post("สวัสดี ฉันชื่อโซระจัง เธอคือใคร", {customInstructions, language:"th"})).status,200);
+    const body=fixture.calls.find(call=>call.kind===provider).body;
+    const prompt=provider==="gemini" ? body.systemInstruction.parts[0].text : body.messages[0].content;
+    assert.ok(prompt.startsWith(persona.hersonaPersonaPrompt));
+    assert.match(prompt,/Intensity: strong/);
+    assert.doesNotMatch(prompt,/Respond in Japanese/);
+    assert.match(prompt,/ตอบด้วย ภาษาไทย เท่านั้น/);
+    assert.match(prompt,/ไม่บอกชื่อหรือแนะนำตัว/);
+    assert.ok(prompt.endsWith(customInstructions));
+  }
+});
+
+test("custom instructions are bounded; empty preferences still get persistent strong persona", async () => {
+  for(const customInstructions of ["", "x".repeat(2100)]) {
+    const fixture=chatFixture(); await fixture.post("วันนี้เหนื่อย",{customInstructions});
+    const prompt=fixture.calls.find(call=>call.kind==="groq").body.messages[0].content;
+    assert.match(prompt,/Intensity: strong/);
+    if(customInstructions) {assert.ok(prompt.endsWith("x".repeat(2000)));assert.equal(prompt.includes("x".repeat(2001)),false);}
+    else assert.doesNotMatch(prompt,/คำแนะนำล่าสุดของโซระ/);
+    assert.doesNotMatch(prompt,/ตานี้ถูกถามชื่อ/);
   }
 });
