@@ -59,9 +59,24 @@ test('disposable render cache reuses copies only for matching model and texture 
   assert.equal(await (await loadRenderCopies('model-a:4096:area-v1')).get('texture.png').text(), 'render copy');
   assert.equal(await loadRenderCopies('model-a:2048:area-v1'), undefined);
   await saveRenderCopies('model-b:4096:area-v1', copies);
-  assert.equal(await loadRenderCopies('model-a:4096:area-v1'), undefined);
+  assert.ok(await loadRenderCopies('model-a:4096:area-v1'));
   await clearRenderCopies();
   assert.equal(await loadRenderCopies('model-b:4096:area-v1'), undefined);
+});
+
+test('render cache bounds entries and bytes across model and quality keys', async () => {
+  await clearRenderCopies();
+  const small = new Map([['atlas', new Blob(['copy'])]]);
+  for (let index = 0; index < 5; index++) await saveRenderCopies(`lru-${index}`, small);
+  assert.equal(await loadRenderCopies('lru-0'), undefined);
+  assert.ok(await loadRenderCopies('lru-4'));
+  await clearRenderCopies();
+  const large = new Map([['atlas', new Blob([new Uint8Array(34 * 1024 * 1024)])]]);
+  await saveRenderCopies('large-a', large); await saveRenderCopies('large-b', large);
+  assert.equal(await loadRenderCopies('large-a'), undefined); assert.ok(await loadRenderCopies('large-b'));
+  // Deletion must drain earlier queued writes rather than resurrecting copies.
+  void saveRenderCopies('late', small); await clearRenderCopies();
+  assert.equal(await loadRenderCopies('late'), undefined);
 });
 
 test('rendering reuses a saved resized atlas without decoding the original again', async () => {
@@ -72,7 +87,7 @@ test('rendering reuses a saved resized atlas without decoding the original again
   const files = assets();
   files.find((entry) => entry.path === 'pack/textures/tex.png').blob = new Blob([header], { type: 'image/png' });
   const pack = await inspectPackage(files, 'cached-render');
-  const key = JSON.stringify(['area-v1', pack.id, [['pack/textures/tex.png', 24, { source: { width: 8, height: 8 }, render: { width: 4, height: 4 } }]]]);
+  const key = JSON.stringify(['area-v2', pack.id, 'legacy', pack.models[0].manifestPath, false, 4, 64, [['pack/textures/tex.png', 24, { source: { width: 8, height: 8 }, render: { width: 4, height: 4 } }]]]);
   await saveRenderCopies(key, new Map([['pack/textures/tex.png', new Blob(['cached resized image'], { type: 'image/png' })]]));
   // Node has no canvas: a cache miss would try resizing and fail this check.
   const resources = await createModelResources(pack, pack.models[0], { maxDimension: 4, budgetBytes: 64 });
@@ -394,4 +409,14 @@ test('Safari asynchronous I/O read failures recover once and a broken cloud copy
   downloads = 0;
   await assert.rejects(hydrateModelPackage(broken, { recover: async () => { downloads++; return broken; } }), { name: 'NotReadableError' });
   assert.equal(downloads, 1);
+});
+
+test('saving replacement originals rotates the render revision even for equal-size assets', async () => {
+  const pack = await inspectPackage(assets(), 'replacement-revision');
+  await saveModelPackage(pack); const revision = pack.renderRevision;
+  assert.equal((await loadModelPackage(pack.id)).renderRevision, revision);
+  await saveModelPackage(pack);
+  assert.notEqual(pack.renderRevision, revision);
+  assert.equal((await loadModelCatalog()).find(entry => entry.id === pack.id).renderRevision, pack.renderRevision);
+  await removeModelPackage(pack.id);
 });

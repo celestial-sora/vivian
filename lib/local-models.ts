@@ -1,4 +1,5 @@
 /** Validated Cubism packages; originals stay in IndexedDB and may sync to private R2. */
+import { startTiming, finishTiming } from "./performance.ts";
 import type { TextureBudget, TexturePlan } from "./model-textures";
 export interface ModelAsset { path: string; blob: Blob }
 export interface ModelMotion { group: string; index: number; name: string }
@@ -11,7 +12,7 @@ export interface LocalModel {
   motions: ModelMotion[];
   previewPath?: string;
 }
-export interface ModelPackage { id: string; assets: ModelAsset[]; models: LocalModel[]; cloudOwner?: string }
+export interface ModelPackage { id: string; assets: ModelAsset[]; models: LocalModel[]; cloudOwner?: string; renderRevision?: string }
 export interface CubismManifest {
   Version: number;
   FileReferences: {
@@ -173,7 +174,8 @@ export async function createModelResources(pack: ModelPackage, model: LocalModel
     const sizes = [];
     for (const texture of textures) { budget.signal?.throwIfAborted(); sizes.push(await readTextureSize(texture.blob)); }
     texturePlan = planTextures(sizes, budget);
-    const cacheKey = JSON.stringify(["area-v1", pack.id, textures.map((texture, index) => [texture.path, texture.blob.size, texturePlan[index]])]);
+    const preparationTiming = startTiming("model_render_package");
+    const cacheKey = JSON.stringify(["area-v2", pack.id, pack.renderRevision ?? "legacy", model.manifestPath, Boolean(budget.original), budget.maxDimension, budget.budgetBytes, textures.map((texture, index) => [texture.path, texture.blob.size, texturePlan[index]])]);
     const cached = texturePlan.some((plan) => plan.source.width !== plan.render.width || plan.source.height !== plan.render.height)
       ? await loadRenderCopies(cacheKey) : undefined;
     for (let index = 0; index < textures.length; index++) {
@@ -184,7 +186,8 @@ export async function createModelResources(pack: ModelPackage, model: LocalModel
       }
     }
     budget.signal?.throwIfAborted();
-    if (!cached) await saveRenderCopies(cacheKey, renderCopies);
+    if (!cached) void saveRenderCopies(cacheKey, renderCopies);
+    finishTiming(preparationTiming, { cacheHit: Boolean(cached), resizedAtlases: renderCopies.size });
     budget.signal?.throwIfAborted();
   }
   const urls = new Map<string, string>();
@@ -224,7 +227,7 @@ async function openStorage(): Promise<IDBDatabase> {
   });
 }
 export function modelCatalogEntry(pack: ModelPackage): ModelPackage {
-  return { id: pack.id, models: pack.models, assets: [], ...(pack.cloudOwner ? { cloudOwner: pack.cloudOwner } : {}) };
+  return { id: pack.id, models: pack.models, assets: [], ...(pack.renderRevision ? { renderRevision: pack.renderRevision } : {}), ...(pack.cloudOwner ? { cloudOwner: pack.cloudOwner } : {}) };
 }
 async function storage<T>(mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest<T>, storeName = "packages"): Promise<T> {
   const db = await openStorage();
@@ -239,7 +242,7 @@ async function storage<T>(mode: IDBTransactionMode, operation: (store: IDBObject
 }
 export async function loadModelPackages(): Promise<ModelPackage[]> {
   const packages = await storage<ModelPackage[]>("readonly", (store) => store.getAll());
-  return Promise.all(packages.map(async (pack) => ({ ...await inspectPackage(pack.assets, pack.id), ...(pack.cloudOwner ? { cloudOwner: pack.cloudOwner } : {}) })));
+  return Promise.all(packages.map(async (pack) => ({ ...await inspectPackage(pack.assets, pack.id), ...(pack.renderRevision ? { renderRevision: pack.renderRevision } : {}), ...(pack.cloudOwner ? { cloudOwner: pack.cloudOwner } : {}) })));
 }
 export const loadModelCatalog = (): Promise<ModelPackage[]> => storage("readonly", (store) => store.getAll(), "catalog");
 export async function loadModelPackage(id: string): Promise<ModelPackage | undefined> {
@@ -247,7 +250,7 @@ export async function loadModelPackage(id: string): Promise<ModelPackage | undef
   if (!pack?.assets.length) return undefined;
   // Older caches were re-inspected by loadModelPackages. Retain that normalization
   // when hydrating one package rather than trusting stale cached model metadata.
-  return { ...await inspectPackage(pack.assets, pack.id), ...(pack.cloudOwner ? { cloudOwner: pack.cloudOwner } : {}) };
+  return { ...await inspectPackage(pack.assets, pack.id), ...(pack.renderRevision ? { renderRevision: pack.renderRevision } : {}), ...(pack.cloudOwner ? { cloudOwner: pack.cloudOwner } : {}) };
 }
 export function isModelBlobReadError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
@@ -288,6 +291,7 @@ export async function hydrateModelPackage(pack: ModelPackage, options?: { recove
 }
 export const saveModelPackage = (pack: ModelPackage): Promise<IDBValidKey> => {
   if (!pack.assets.length || pack.models.some((model) => !pack.assets.some((asset) => asset.path === model.manifestPath))) return Promise.reject(new Error("Cannot save a model catalog entry without its original model files."));
+  pack.renderRevision = crypto.randomUUID();
   return storage("readwrite", (store) => {
     store.transaction.objectStore("catalog").put(modelCatalogEntry(pack));
     return store.put(pack);
