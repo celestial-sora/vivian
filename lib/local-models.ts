@@ -135,10 +135,27 @@ function mime(path: string): string {
   if (/\.ogg$/i.test(path)) return "audio/ogg";
   return /\.png$/i.test(path) ? "image/png" : /\.jpe?g$/i.test(path) ? "image/jpeg" : /\.webp$/i.test(path) ? "image/webp" : /\.gif$/i.test(path) ? "image/gif" : /\.json$/i.test(path) ? "application/json" : "application/octet-stream";
 }
+export async function detectModelArchive(file: File): Promise<"zip" | "rar" | undefined> {
+  const bytes = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+  const zip = bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && (
+    (bytes[2] === 0x03 && bytes[3] === 0x04) ||
+    (bytes[2] === 0x05 && bytes[3] === 0x06) ||
+    (bytes[2] === 0x07 && bytes[3] === 0x08)
+  );
+  if (zip) return "zip";
+  const rar = bytes.length >= 7 && bytes[0] === 0x52 && bytes[1] === 0x61 && bytes[2] === 0x72 &&
+    bytes[3] === 0x21 && bytes[4] === 0x1a && bytes[5] === 0x07 && (bytes[6] === 0x00 || (bytes[6] === 0x01 && bytes[7] === 0x00));
+  if (rar) return "rar";
+  if (/\.zip$/i.test(file.name)) return "zip";
+  if (/\.rar$/i.test(file.name)) return "rar";
+  return undefined;
+}
+
 export async function importModelFiles(files: File[]): Promise<ModelPackage> {
-  if (!files.length) throw new Error("Select a model ZIP or folder.");
+  if (!files.length) throw new Error("Select a model ZIP, RAR, or folder.");
   let assets: ModelAsset[];
-  if (files.length === 1 && /\.zip$/i.test(files[0].name)) {
+  const archive = files.length === 1 ? await detectModelArchive(files[0]) : undefined;
+  if (files.length === 1 && archive === "zip") {
     if (files[0].size > MAX_BYTES) throw new Error("ZIP exceeds 512 MB.");
     const { extractModelZip } = await import("./model-zip.ts");
     const extracted = await extractModelZip(files[0], MAX_BYTES, MAX_FILES);
@@ -151,7 +168,14 @@ export async function importModelFiles(files: File[]): Promise<ModelPackage> {
       } catch (error) { pathError ??= error; }
     }
     throw pathError;
-  } else assets = files.map((file) => ({ path: file.webkitRelativePath || file.name, blob: file }));
+  }
+  if (files.length === 1 && archive === "rar") {
+    const { extractModelRar } = await import("./model-rar.ts");
+    const extracted = await extractModelRar(files[0], MAX_BYTES, MAX_FILES);
+    assets = extracted.map((asset) => ({ path: asset.path, blob: new Blob([asset.blob], { type: mime(asset.path) }) }));
+  } else {
+    assets = files.map((file) => ({ path: file.webkitRelativePath || file.name, blob: file }));
+  }
   return inspectPackage(assets);
 }
 
