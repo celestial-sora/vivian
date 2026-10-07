@@ -255,6 +255,7 @@ function chatFixture({ values, jevFetch, env = {}, denied = null, groqReply, cer
     "@/lib/tools": fixtureTools,
     "@/lib/jev": fixtureJev,
     "@/lib/chat-decision": fixturePlan,
+    "@/lib/chat-stream": load("../lib/chat-stream.ts", {}, { Response, ReadableStream, TextEncoder, TextDecoder }),
     "@/lib/chat-history": load("../lib/chat-history.ts", {}, { crypto: require("node:crypto").webcrypto }),
     "@/lib/chat-history-store": { saveHistory: async () => { calls.push({ kind: "history" }); } },
     "next/server": { ...require("next/server"), after: (callback) => background.push(callback) },
@@ -269,8 +270,8 @@ function chatFixture({ values, jevFetch, env = {}, denied = null, groqReply, cer
       assert.fail(`Unexpected service request: ${url}`);
     },
   });
-  return { calls, background, memoryLoads, async post(message = "Hello Vivian", extra = {}) {
-    return route.POST(new Request("https://vivian.example/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ role: "user", content: message }], ...extra }) }));
+  return { calls, background, memoryLoads, async post(message = "Hello Vivian", extra = {}, headers = {}) {
+    return route.POST(new Request("https://vivian.example/api/chat", { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ messages: [{ role: "user", content: message }], ...extra }) }));
   } };
 }
 
@@ -566,4 +567,23 @@ test("self-question persistence reaches the provider as actual separate turns", 
     assert.match(turns[0].content,/มนุษย์หรือ AI.*ตอบตามจริง/);
     if(count<followups.length)messages.push({role:"assistant",content:"ไม่บอกหรอก"},{role:"user",content:followups[count]});
   }
+});
+
+test("opt-in timing streams signal the provider token before the final sanitized reply; legacy callers stay JSON", async () => {
+  let finish;
+  const fixture = chatFixture({ groqReply: (body) => {
+    assert.equal(body.stream, true);
+    return new Response(new ReadableStream({ start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"...มาแล้วเหรอ"}}]}\n\n'));
+      finish = () => { controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":" ชิ"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')); controller.close(); };
+    } }), { headers: { "Content-Type": "text/event-stream" } });
+  } });
+  const response = await fixture.post('Hello', {}, { Accept: 'application/x-ndjson' });
+  const reader = response.body.getReader();
+  const first = JSON.parse(new TextDecoder().decode((await reader.read()).value));
+  assert.equal(first.event, 'first_token'); assert.equal(first.provider, 'groq'); assert.equal(first.text, undefined);
+  assert.ok(first.timing.preparationMs >= 0); assert.ok(first.timing.providerMs >= 0);
+  finish(); const final = JSON.parse(new TextDecoder().decode((await reader.read()).value));
+  assert.equal(final.event, 'reply'); assert.equal(final.status, 200); assert.equal(final.data.text, '...มาแล้วเหรอ ชิ');
+  assert.equal((await reader.read()).done, true);
 });

@@ -24,6 +24,9 @@ if (process.env.VIVIAN_TEST_SCENE_UPSTREAM) {
     if (url.includes("api.groq.com/openai/v1/chat/completions")) {
       const body = JSON.parse(init.body);
       await realFetch(`${fixtureUrl}/__model-request`, { method: "POST", body: JSON.stringify({ kind: "groq", body }) });
+      if (body.stream) {
+        return new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: "ได้เลยค่ะ ไปพักผ่อนกันนะคะ" } }] })}\n\ndata: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`, { headers: { "Content-Type": "text/event-stream" } });
+      }
       return Response.json({ choices: [{ message: { content: "ได้เลยค่ะ ไปพักผ่อนกันนะคะ" } }] });
     }
     return realFetch(input, init);

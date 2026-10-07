@@ -32,6 +32,7 @@ export async function POST(request: Request): Promise<Response> {
   const style = speechStyle(cleanText);
   const model = process.env.FISH_AUDIO_MODEL ?? "s2.1-pro-free";
 
+  const providerStarted = Date.now();
   let phase = "request";
   try {
     const response = await fetch("https://api.fish.audio/v1/tts", {
@@ -79,7 +80,7 @@ export async function POST(request: Request): Promise<Response> {
     }
     const elapsedMs = Date.now() - startedAt;
     console.info("Fish Audio TTS ready", { elapsedMs, textLength: cleanText.length, language: speechLanguage, delivery: style.delivery, bytes: audio.byteLength });
-    return new NextResponse(audio, { headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-store", "Server-Timing": `fish;dur=${elapsedMs}` } });
+    return new NextResponse(audio, { headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-store", "Server-Timing": `fish;dur=${Date.now() - providerStarted}, tts_route;dur=${elapsedMs}` } });
   } catch (error) {
     const name = error instanceof Error ? error.name : "unknown";
     const timedOut = name === "TimeoutError" || name === "AbortError";

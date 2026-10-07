@@ -28,6 +28,7 @@ export async function POST(request: Request) {
   if (language) form.append("language_code", language);
   let response: Response;
   let data: unknown;
+  const providerStarted = Date.now();
   try {
     response = await fetch("https://api.elevenlabs.io/v1/speech-to-text", { method: "POST", headers: { "xi-api-key": key }, body: form, signal: AbortSignal.timeout(25000) });
     if (response.ok) data = await response.json();
@@ -41,5 +42,5 @@ export async function POST(request: Request) {
   }
   const text = typeof data === "object" && data !== null && "text" in data && typeof data.text === "string" ? data.text : "";
   console.info("ElevenLabs STT complete", { mimeType: file.type, size: file.size, language });
-  return NextResponse.json({ text });
+  return NextResponse.json({ text }, { headers: { "Cache-Control": "no-store", "Server-Timing": `scribe;dur=${Date.now() - providerStarted}` } });
 }

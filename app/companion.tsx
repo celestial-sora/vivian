@@ -5,6 +5,7 @@ import { captureModelRestState, restoreModelRestState, type ModelRestState, type
 import { attachModelWind, type WindInternalModel } from "@/lib/model-wind";
 import { waitForCubismCore } from "@/lib/model-runtime";
 import { scheduleBackgroundWork } from "@/lib/startup-background";
+import { readChatResponse } from "@/lib/chat-stream";
 import { startTiming, finishTiming, cancelTiming, type LocalTiming } from "@/lib/performance";
 import { shouldPauseModelStartup, clearModelLoadState } from "@/lib/model-startup";
 import { useConversationHistory } from "@/lib/use-conversation-history";
@@ -398,6 +399,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     } catch (error) {
       if (abort.signal.aborted) return;
       cancelTiming(modelSelectionTimingRef.current);
+      setModelStatus(modelRef.current ? "ready" : "error");
       setModelNotice(error instanceof Error ? error.message : "Could not load model.");
     } finally { if (modelSelectionAbortRef.current === abort) modelSelectionAbortRef.current = null; }
   }
@@ -740,24 +742,28 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         setModelStatus("ready");
         clearRecovery();
         if (!activeModel.previewPath) {
-          try {
-            app.renderer.render(app.stage);
-            // Read the rendered framebuffer: extracting the model as a render
-            // texture resets its transform and makes Cubism previews too small.
-            const snapshot = app.renderer.plugins.extract.canvas() as HTMLCanvasElement;
-            const visibleBounds = model.getBounds();
-            const pixelRatio = snapshot.width / app.renderer.screen.width;
-            const left = Math.max(0, visibleBounds.x * pixelRatio);
-            const top = Math.max(0, visibleBounds.y * pixelRatio);
-            const width = Math.max(1, Math.min(snapshot.width - left, visibleBounds.width * pixelRatio));
-            const height = Math.max(1, Math.min(snapshot.height - top, visibleBounds.height * pixelRatio));
-            const thumbnail = document.createElement("canvas");
-            const previewScale = Math.min(256 / width, 256 / height);
-            thumbnail.width = Math.max(1, Math.round(width * previewScale));
-            thumbnail.height = Math.max(1, Math.round(height * previewScale));
-            thumbnail.getContext("2d")?.drawImage(snapshot, left, top, width, height, 0, 0, thumbnail.width, thumbnail.height);
-            setModelPreview(thumbnail.toDataURL("image/png"));
-          } catch { /* Preview failure does not prevent the model from loading. */ }
+          // Let the first frame paint before extracting a renderer thumbnail.
+          window.setTimeout(() => {
+            if (modelRef.current !== model || disposed) return;
+            try {
+              app.renderer.render(app.stage);
+              // Read the rendered framebuffer: extracting the model as a render
+              // texture resets its transform and makes Cubism previews too small.
+              const snapshot = app.renderer.plugins.extract.canvas() as HTMLCanvasElement;
+              const visibleBounds = model.getBounds();
+              const pixelRatio = snapshot.width / app.renderer.screen.width;
+              const left = Math.max(0, visibleBounds.x * pixelRatio);
+              const top = Math.max(0, visibleBounds.y * pixelRatio);
+              const width = Math.max(1, Math.min(snapshot.width - left, visibleBounds.width * pixelRatio));
+              const height = Math.max(1, Math.min(snapshot.height - top, visibleBounds.height * pixelRatio));
+              const thumbnail = document.createElement("canvas");
+              const previewScale = Math.min(256 / width, 256 / height);
+              thumbnail.width = Math.max(1, Math.round(width * previewScale));
+              thumbnail.height = Math.max(1, Math.round(height * previewScale));
+              thumbnail.getContext("2d")?.drawImage(snapshot, left, top, width, height, 0, 0, thumbnail.width, thumbnail.height);
+              setModelPreview(thumbnail.toDataURL("image/png"));
+            } catch { /* Preview failure does not prevent the model from loading. */ }
+          }, 0);
         }
         window.addEventListener("resize", queueResize);
         window.addEventListener("orientationchange", handleOrientationChange);
@@ -1034,25 +1040,37 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     };
     lipSyncFrameRef.current = requestAnimationFrame(update);
   }
-  async function speak(text: string): Promise<boolean> {
-    if (mutedRef.current) return false;
+  async function speak(text: string, replyTiming?: LocalTiming): Promise<boolean> {
+    if (mutedRef.current) { cancelTiming(replyTiming); return false; }
     const speakId = ++speakIdRef.current;
     const abort = new AbortController();
     ttsAbortRef.current = abort;
     speakingRef.current = true;
     const timeout = window.setTimeout(() => abort.abort(), TTS_TIMEOUT_MS);
     let objectUrl: string | null = null;
+    const ttsTiming = startTiming("tts_request_to_audio_start");
+    const downloadTiming = startTiming("tts_request_to_audio_ready");
+    let playbackTiming: LocalTiming | undefined;
     try {
-      await withTimeout(unlockAudio(), AUDIO_UNLOCK_MS, undefined);
-      if (speakId !== speakIdRef.current) return false;
-      const response = await authFetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, signal: abort.signal, body: JSON.stringify({ text, speed: speechSpeedRef.current, language: speechLanguageRef.current }) });
+      // Audio unlocking and provider generation are independent. Playback still
+      // waits for unlocking before using the shared Safari audio element.
+      const [ready] = await Promise.all([
+        authFetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, signal: abort.signal, body: JSON.stringify({ text, speed: speechSpeedRef.current, language: speechLanguageRef.current }) }).then(async (response) => {
+          const blob = response.ok ? await withTimeout(response.blob(), TTS_TIMEOUT_MS, null) : null;
+          if (blob?.size && speakId === speakIdRef.current) {
+            finishTiming(downloadTiming, { serverTiming: response.headers.get("server-timing") ?? "unavailable" });
+            playbackTiming = startTiming("audio_ready_to_playback");
+          }
+          return { response, blob };
+        }),
+        withTimeout(unlockAudio(), AUDIO_UNLOCK_MS, undefined),
+      ]);
+      const { response, blob } = ready;
       if (speakId !== speakIdRef.current) return false;
       if (!response.ok) {
         const error = await response.json().catch(() => null) as { error?: string; code?: string } | null;
         throw new Error(error?.code ?? error?.error ?? "TTS failed");
       }
-      const blob = await withTimeout(response.blob(), TTS_TIMEOUT_MS, null);
-      if (speakId !== speakIdRef.current) return false;
       if (!blob || blob.size === 0) throw new Error("TTS failed");
       const audio = audioRef.current ?? new Audio();
       audioRef.current?.pause();
@@ -1080,6 +1098,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         stopLipSync();
         throw new Error("TTS playback did not start");
       }
+      finishTiming(ttsTiming); finishTiming(replyTiming); finishTiming(playbackTiming);
       // Start the animation only after playback begins. Starting it before
       // audio.play() lets the first frame see `paused` and permanently stop.
       startLipSync(audio);
@@ -1096,6 +1115,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       return false;
     } finally {
+      cancelTiming(ttsTiming); cancelTiming(replyTiming); cancelTiming(downloadTiming); cancelTiming(playbackTiming);
       window.clearTimeout(timeout);
       if (ttsAbortRef.current === abort) ttsAbortRef.current = null;
     }
@@ -1139,10 +1159,12 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     const sceneGeneration = sceneLibrary.getGeneration();
     const replyMessageId = crypto.randomUUID();
     const requestConversationId = activeConversationRef.current;
+    const firstTokenTiming = startTiming("send_to_first_token");
+    const replyTiming = startTiming("send_to_reply");
     try {
       const response = await authFetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
         signal: abortAfter(CHAT_TIMEOUT_MS),
         body: JSON.stringify({
           mode: visionIdle ? "vision_idle" : idle ? "idle" : "chat",
@@ -1158,14 +1180,21 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
           language: speechLanguageRef.current,
         }),
       });
-      const data = await withTimeout(response.json() as Promise<{ scene?: SceneDecision; text?: string; error?: string; code?: string; memories?: Memory[]; companion?: CompanionState }>, 5000, null);
-      if (!response.ok || !data?.text) throw new Error(data?.code ?? data?.error ?? "Chat request failed");
+      const { data, ok } = await readChatResponse<{ scene?: SceneDecision; text?: string; error?: string; code?: string; memories?: Memory[]; companion?: CompanionState }>(response, (provider, timing) => {
+        const elapsed = performance.now() - (firstTokenTiming?.start ?? performance.now());
+        finishTiming(firstTokenTiming, {
+          provider, ...(timing ?? {}),
+          ...(timing ? { transportAndClientMs: Math.max(0, elapsed - timing.preparationMs - timing.providerMs) } : {}),
+        });
+      });
+      finishTiming(replyTiming);
+      if (!ok || !data?.text) throw new Error(data?.code ?? data?.error ?? "Chat request failed");
       sceneLibrary.applyChatScene(data.scene, sceneGeneration);
       const reply = data.text;
       setErrorNotice(null);
       // Do not reveal the reply bubble before Fish Audio has started. This
       // keeps the visible text and spoken response arriving together.
-      if (!muted) await speak(reply);
+      if (!muted) await speak(reply, startTiming("reply_to_audio_start"));
       setMessages((current) => [...current, historyMessage("vivian", reply, replyMessageId)]);
       const nextCompanion = normalizeCompanion(data.companion);
       if (nextCompanion) setCompanion(nextCompanion);
@@ -1186,6 +1215,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         setMessages((current) => [...current, historyMessage("vivian", message)]);
       }
     } finally {
+      cancelTiming(firstTokenTiming); cancelTiming(replyTiming);
       setSending(false);
       sendingRef.current = false;
     }
@@ -1325,6 +1355,12 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         }
         const form = new FormData();
         form.append("file", new Blob(chunks, { type: actualMimeType }), `vivian-recording.${extension}`);
+        const speechEnd = voiceActivityRef.current?.quietSince;
+        const start = speechEnd === null || speechEnd === undefined ? performance.now() : Math.max(0, performance.now() - (Date.now() - speechEnd));
+        const transcriptTiming = startTiming("speech_end_to_transcript", start);
+        const endpointTiming = startTiming("speech_end_to_stt_request", start);
+        const sttTiming = startTiming("stt_request_to_transcript");
+        finishTiming(endpointTiming);
         try {
           form.append("language", speechLanguageRef.current);
           const response = await authFetch("/api/stt", { method: "POST", body: form, signal: abortAfter(STT_TIMEOUT_MS) });
@@ -1332,6 +1368,8 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
           if (generation !== memoryGenerationRef.current) return;
           if (!response.ok) throw new Error(data.error ?? "STT failed");
           if (data.text?.trim()) {
+            finishTiming(transcriptTiming);
+            finishTiming(sttTiming, { serverTiming: response.headers.get("server-timing") ?? "unavailable" });
             setSttPreview(data.text);
             void sendMessage(data.text);
             window.setTimeout(() => setSttPreview(null), 5000);
@@ -1341,6 +1379,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
           setSttPreview("ฟังไม่ชัด ลองพูดใหม่อีกครั้งนะคะ");
           window.setTimeout(() => setSttPreview(null), 3000);
         } finally {
+          cancelTiming(transcriptTiming); cancelTiming(sttTiming);
           recorderRef.current = null;
           streamRef.current = null;
           window.setTimeout(resumeListening, 250);

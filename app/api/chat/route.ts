@@ -1,3 +1,4 @@
+import { readProviderStream, timedChatResponse, type TokenTiming } from "@/lib/chat-stream";
 import { historyUuid } from "@/lib/chat-history";
 import { saveHistory } from "@/lib/chat-history-store";
 import { requireApiAccess } from "@/lib/auth/server";
@@ -58,53 +59,58 @@ async function callCerebras(
   apiKey: string,
   messages: any[],
   model = cerebrasModelName(),
-  options: { timeoutMs?: number; json?: boolean; maxTokens?: number } = {}
+  options: { timeoutMs?: number; json?: boolean; maxTokens?: number; firstToken?: () => void } = {}
 ) {
   const payload: Record<string, unknown> = {
     model,
     messages,
+    ...(options.firstToken ? { stream: true } : {}),
     temperature: options.json ? 0 : 0.8,
     max_tokens: options.maxTokens ?? 2500,
   };
   if (options.json) payload.response_format = { type: "json_object" };
-  return fetch("https://api.cerebras.ai/v1/chat/completions", {
+  const response = await fetch("https://api.cerebras.ai/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey.trim()}`, "Content-Type": "application/json" },
     signal: AbortSignal.timeout(options.timeoutMs ?? providerTimeoutMs),
     body: JSON.stringify(payload),
   });
+  return options.firstToken ? readProviderStream(response, "openai", options.firstToken) : response;
 }
 
 async function callGroq(
   apiKey: string,
   messages: any[],
   model = groqModelName(),
-  options: { timeoutMs?: number; maxTokens?: number } = {}
+  options: { timeoutMs?: number; maxTokens?: number; firstToken?: () => void } = {}
 ) {
   const payload: Record<string, unknown> = {
     model,
     messages,
+    ...(options.firstToken ? { stream: true } : {}),
     temperature: 0.8,
     max_tokens: options.maxTokens ?? 2500,
   };
-  return fetch("https://api.groq.com/openai/v1/chat/completions", {
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     signal: AbortSignal.timeout(options.timeoutMs ?? providerTimeoutMs),
     body: JSON.stringify(payload),
   });
+  return options.firstToken ? readProviderStream(response, "openai", options.firstToken) : response;
 }
 
-async function callGemini(apiKey: string, payload: Record<string, unknown>, model = geminiPrimaryModel(), options: { version?: string; timeoutMs?: number } = {}) {
+async function callGemini(apiKey: string, payload: Record<string, unknown>, model = geminiPrimaryModel(), options: { version?: string; timeoutMs?: number; firstToken?: () => void } = {}) {
   const cleanKey = apiKey.trim();
   const version = options.version ?? "v1beta";
   const timeoutMs = options.timeoutMs ?? providerTimeoutMs;
-  return fetch(`https://generativelanguage.googleapis.com/${version}/models/${model}:generateContent?key=${encodeURIComponent(cleanKey)}`, {
+  const response = await fetch(`https://generativelanguage.googleapis.com/${version}/models/${model}:${options.firstToken ? "streamGenerateContent?alt=sse&" : "generateContent?"}key=${encodeURIComponent(cleanKey)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": cleanKey },
     signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify(payload),
   });
+  return options.firstToken ? readProviderStream(response, "gemini", options.firstToken) : response;
 }
 
 async function extractMemories(apiKey: string, userText: string) {
@@ -261,11 +267,18 @@ ${memoryContext}${toolContext}`;
 }
 
 export async function POST(request: Request) {
+  const requestStarted = Date.now();
   let authenticatedUserId: string | null = null;
   const denied = await requireApiAccess(request, (user) => { authenticatedUserId = user.id; });
   if (denied) return denied;
   const quota = rateLimit(request, "chat", 20);
   if (!quota.allowed) return rateLimitedResponse(quota.retryAfter);
+  return request.headers.get("accept")?.includes("application/x-ndjson")
+    ? timedChatResponse((firstToken) => chatReply(request, authenticatedUserId, requestStarted, firstToken))
+    : chatReply(request, authenticatedUserId, requestStarted);
+}
+
+async function chatReply(request: Request, authenticatedUserId: string | null, requestStarted: number, firstToken?: (provider: string, timing?: TokenTiming) => void) {
   const cerebrasApiKey = process.env.CEREBRAS_API_KEY;
   const groqApiKey = process.env.GROQ_API_KEY;
   const geminiApiKey = process.env.GEMINI_API_KEY;
@@ -416,6 +429,8 @@ export async function POST(request: Request) {
       ];
 
   let generatedData: any = null;
+  let providerStarted = 0;
+  const observeToken = (provider: string) => firstToken ? () => firstToken(provider, { preparationMs: providerStarted - requestStarted, providerMs: Date.now() - providerStarted }) : undefined;
 
   // Capability route: Gemini handles image input directly.
   if (plan.modelRoute === "vision" && geminiApiKey) {
@@ -430,7 +445,8 @@ export async function POST(request: Request) {
     for (const model of geminiVisionCandidates) {
       try {
         const payload = shouldSearch ? { ...geminiPayload, tools: [{ google_search: {} }] } : geminiPayload;
-        const res = await callGemini(geminiApiKey, payload, model, { timeoutMs: visionTimeoutMs });
+        providerStarted = Date.now();
+        const res = await callGemini(geminiApiKey, payload, model, { timeoutMs: visionTimeoutMs, firstToken: observeToken("gemini") });
         if (res.ok) {
           generatedData = await res.json();
           provider = "gemini";
@@ -451,7 +467,8 @@ export async function POST(request: Request) {
     for (const gModel of groqCandidates) {
       try {
         const msgs = [{ role: "system" as const, content: systemPrompt }, ...promptContents];
-        const initialRes = await callGroq(groqApiKey, msgs, gModel, { maxTokens: responseTokenLimit });
+        providerStarted = Date.now();
+        const initialRes = await callGroq(groqApiKey, msgs, gModel, { maxTokens: responseTokenLimit, firstToken: observeToken("groq") });
         if (initialRes.ok) {
           const initialData = await initialRes.json();
           generatedData = initialData;
@@ -482,7 +499,8 @@ export async function POST(request: Request) {
     for (const cModel of cerebrasCandidates) {
       try {
         const msgs = [{ role: "system" as const, content: systemPrompt }, ...promptContents];
-        const initialRes = await callCerebras(cerebrasApiKey, msgs, cModel, { maxTokens: responseTokenLimit });
+        providerStarted = Date.now();
+        const initialRes = await callCerebras(cerebrasApiKey, msgs, cModel, { maxTokens: responseTokenLimit, firstToken: observeToken("cerebras") });
         if (initialRes.ok) {
           const initialData = await initialRes.json();
           generatedData = initialData;
@@ -510,7 +528,8 @@ export async function POST(request: Request) {
     for (const model of geminiCandidates) {
       try {
         const payload = shouldSearch ? { ...geminiPayload, tools: [{ google_search: {} }] } : geminiPayload;
-        const res = await callGemini(geminiApiKey, payload, model, { timeoutMs: hasImage ? visionTimeoutMs : providerTimeoutMs });
+        providerStarted = Date.now();
+        const res = await callGemini(geminiApiKey, payload, model, { timeoutMs: hasImage ? visionTimeoutMs : providerTimeoutMs, firstToken: observeToken("gemini") });
         if (res.ok) {
           generatedData = await res.json();
           provider = "gemini";

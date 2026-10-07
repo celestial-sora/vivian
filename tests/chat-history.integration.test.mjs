@@ -35,6 +35,18 @@ test("real chat response is saved to its selected thread before the browser rece
   assert.equal(response.status, 200); const data = await response.json(); assert.equal(data.historySaved, true);
   const read = await (await call(`/api/conversations?id=${id}`, null, "second")).json(); assert.equal(read.messages.length, 2); assert.equal(read.messages[1].id, replyId); assert.equal(read.messages[1].text, data.text);
 });
+test("timing-stream chat keeps authentication and saves the final reply before completing its envelope", async () => {
+  const denied = await fetch(`${base}/api/chat`, { method: "POST", headers: { Accept: "application/x-ndjson", "Content-Type": "application/json" }, body: "{}" });
+  assert.equal(denied.status, 401);
+  const streamedReplyId = randomUUID(), streamedUserId = randomUUID();
+  const response = await fetch(`${base}/api/chat`, { method: "POST", headers: { cookie: sessionCookie("first"), "Content-Type": "application/json", Accept: "application/x-ndjson" }, body: JSON.stringify({ conversationId: id, conversationCreate: false, userMessageId: streamedUserId, assistantMessageId: streamedReplyId, messages: [{ role: "user", content: "stream timing fixture" }] }) });
+  assert.match(response.headers.get("content-type"), /application\/x-ndjson/);
+  const events = (await response.text()).trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(events[0].event, "first_token"); assert.equal(events[0].provider, "groq"); assert.equal(events[0].text, undefined);
+  const final = events.at(-1); assert.equal(final.status, 200); assert.equal(final.data.historySaved, true);
+  const read = await (await call(`/api/conversations?id=${id}`, null, "second")).json();
+  assert.equal(read.messages.find(message => message.id === streamedReplyId).text, final.data.text);
+});
 test("history auth, validation and unavailable storage do not expose data or claim successful saving", async () => {
   for (const account of ["denied", "unverified"]) assert.equal((await call("/api/conversations", null, account)).status, 403);
   assert.equal((await fetch(`${base}/api/conversations`)).status, 401);
