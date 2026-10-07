@@ -127,3 +127,5 @@ Run feature tests with scripts such as `npm run test:auth`, `npm run test:jev`, 
 This repository contains Vivian's application code. Models and other assets may have separate license terms. Live2D credit: **sorachan**. Make sure a model's license allows your intended use and private cloud storage.
 
 Thai Text-to-Speech prepares a separate spoken version of replies (contextual number readings, Markdown cleanup and preserved stammers). See [Thai TTS audit and listening checklist](docs/tts-thai.md); voice identity and loudness settings remain unchanged.
+
+Speaking speed is shared across all authorized accounts via `/api/voice/preferences`. Apply `supabase/migrations/20261007030145_global_voice_preferences.sql` before using it. The client reloads the cloud value on opening, focus and every 15 seconds while visible; the latest completed save wins. Cloud failures are shown in Voice with a retry control. Voice volume and language remain unchanged.

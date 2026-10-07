@@ -463,3 +463,10 @@ Follow up only where needed: verify live Google provider configuration and produ
 - Added speech-only Thai contextual number readings, Markdown/stage cleanup and shorter positive Thai S2 delivery cues. Preserved voice reference/model default, volume/loudness, speed/persona/stammers, STT and chat content.
 - Verification: `npm ci`; 17 speech/TTS tests and 9 persona/companion tests pass; targeted ESLint, `npx tsc --noEmit`, production build and `git diff --check` pass. Full repository lint retains 21 pre-existing errors (compared against detached baseline); no new errors.
 - No configured Fish credentials or real-audio listening verification. Accent, intelligibility and voice identity still need listening; unit tests only verify preparation and mocked provider payload. No independent Vercel deployment was invoked; this task uses the single main push requested by the user.
+
+## Global speaking speed — 2026-10-07
+
+- Previously the speed slider only changed React state and reset to .98 on refresh. Added authenticated GET/PATCH `/api/voice/preferences` with one fixed `global` singleton, speed bounds and uncached responses. All authorized accounts share the same value. Existing TTS request speed and loudness behavior remain unchanged.
+- Added client load on mount/focus/visibility and 15-second visible polling, optimistic slider updates, serialized/coalesced writes, stale-read protection and visible save/error/retry status. No load operation writes defaults to the cloud.
+- Migration `20261007030145_global_voice_preferences.sql` creates a dedicated service-only RLS table, preserving voice settings through companion reset.
+- Verification: 20 voice-preference and speech/TTS route tests pass; production build, TypeScript, targeted ESLint and diff check pass. Live cloud verification is blocked: connected Supabase project `xcshcbuginjxpunmpzoo` reports INACTIVE; read query and migration application both time out. The migration is committed but NOT confirmed applied. Resume the intended Supabase project and apply/verify the migration before claiming global sync works in production.

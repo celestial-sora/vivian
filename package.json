@@ -22,7 +22,8 @@
     "test:scenes:integration": "node --test tests/scenes.integration.test.mjs",
     "test:history": "node --experimental-strip-types --test tests/chat-history.test.mjs",
     "test:history:integration": "node --test tests/chat-history.integration.test.mjs",
-    "test:history:postgres": "node --test tests/chat-history.postgres.test.mjs"
+    "test:history:postgres": "node --test tests/chat-history.postgres.test.mjs",
+    "test:voice-preferences": "node --experimental-strip-types --test tests/voice-preferences.test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1146.0",
