@@ -125,3 +125,5 @@ Run feature tests with scripts such as `npm run test:auth`, `npm run test:jev`, 
 ## License and assets
 
 This repository contains Vivian's application code. Models and other assets may have separate license terms. Live2D credit: **sorachan**. Make sure a model's license allows your intended use and private cloud storage.
+
+Thai Text-to-Speech prepares a separate spoken version of replies (contextual number readings, Markdown cleanup and preserved stammers). See [Thai TTS audit and listening checklist](docs/tts-thai.md); voice identity and loudness settings remain unchanged.

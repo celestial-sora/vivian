@@ -11,7 +11,7 @@ const source = ts.transpileModule(readFileSync(new URL("../app/api/tts/route.ts"
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-function handler(fetch, denied = null) {
+function handler(fetch, denied = null, payload = { text: "สวัสดีค่ะ", language: "th" }) {
   const exports = {};
   const logs = [];
   runInNewContext(source, {
@@ -29,7 +29,7 @@ function handler(fetch, denied = null) {
     },
   });
   return { post: () => exports.POST(new Request("https://vivian.example/api/tts", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "สวัสดีค่ะ", language: "th" }),
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
   })), logs };
 }
 
@@ -91,4 +91,23 @@ test("complete MP3 is preserved; empty audio and provider rejections stay JSON e
 test("access denial stops synthesis before contacting Fish", async () => {
   const denied = Response.json({ code: "AUTH_REQUIRED" }, { status: 401 });
   assert.equal(await handler(async () => { assert.fail("Fish must not be called"); }, denied).post(), denied);
+});
+
+test("actual Fish payload uses prepared Thai speech and preserves voice and loudness", async () => {
+  const text = "(กอดอก) ราคา 1,250 บาท ลด 15% ด- ด- เดี๋ยว!";
+  const fixture = handler(async (url, options) => {
+    assert.equal(url, "https://api.fish.audio/v1/tts");
+    assert.equal(options.headers.model, "s2.1-pro-free");
+    const body = JSON.parse(options.body);
+    assert.equal(body.reference_id, "fixture-voice");
+    assert.deepEqual(body.prosody, { speed: .97, volume: 0, normalize_loudness: true });
+    assert.equal(body.text, "[พูดไทยกลาง เขิน กลบเกลื่อนความรู้สึก] ราคา หนึ่งพันสองร้อยห้าสิบบาท ลด สิบห้าเปอร์เซ็นต์ ด… ด… เดี๋ยว!");
+    assert.equal(body.normalize, false);
+    assert.equal(body.repetition_penalty, 1);
+    assert.equal(body.condition_on_previous_chunks, true);
+    assert.equal("language" in body, false);
+    return new Response(new Uint8Array([73, 68, 51]));
+  }, null, { text, language: "th" });
+  assert.equal((await fixture.post()).status, 200);
+  assert.equal(text, "(กอดอก) ราคา 1,250 บาท ลด 15% ด- ด- เดี๋ยว!");
 });

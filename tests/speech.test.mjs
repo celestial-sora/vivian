@@ -3,7 +3,7 @@ import test from "node:test";
 import { fishSpeechText, speechSpeed, speechStyle, speechText } from "../lib/speech.ts";
 
 test("spoken replies omit stage directions and sources but retain dialogue and explanations", () => {
-  assert.equal(speechText("(หลบตา) ไม่ได้รอหรอก... **Vivian** อ่าน [เรื่องนี้](https://example.com) (เวอร์ชัน 2)\nแหล่งข้อมูล:\n- https://example.com"), "ไม่ได้รอหรอก… Vivian อ่าน เรื่องนี้ (เวอร์ชัน 2)");
+  assert.equal(speechText("(หลบตา) ไม่ได้รอหรอก... **Vivian** อ่าน [เรื่องนี้](https://example.com) (เวอร์ชัน 2)\nแหล่งข้อมูล:\n- https://example.com"), "ไม่ได้รอหรอก… Vivian อ่าน เรื่องนี้ (เวอร์ชัน สอง)");
   assert.equal(speechText("（เม้มปากกลบยิ้ม） ทำได้ดีนี่!"), "ทำได้ดีนี่!");
   assert.equal(speechText("(blushes) I'm not waiting! (version 2)"), "I'm not waiting! (version 2)");
   assert.equal(speechText("(หลบตา)"), "");
@@ -29,7 +29,7 @@ test("romaji stammers keep every attempted syllable without spelling the letter 
   assert.match(speechStyle(text).cue, /stammering naturally/);
   assert.equal(speechStyle(text).repetitionPenalty, 1);
   assert.equal(speechStyle("เล่ามาสิ").repetitionPenalty, 1.2);
-  assert.match(fishSpeechText(text, speechStyle(text), "s2.1-pro-free", "th"), /standard Central Thai accent/);
+  assert.match(fishSpeechText(text, speechStyle(text), "s2.1-pro-free", "th"), /พูดไทยกลาง/);
   assert.equal(speechText("B-B-Baka"), "Ba… Ba… Baka");
   assert.equal(speechText("B‑ B‑ Baka"), "Ba… Ba… Baka");
   assert.equal(speechText("B– B– Baka"), "Ba… Ba… Baka");
@@ -78,10 +78,10 @@ test("compounds, acronyms, and ordinary hesitation retain their meaning", () => 
 test("Thai speech receives standard Central Thai delivery without changing spoken words", () => {
   const text = "อย่าเข้าใจผิด ฉันไม่ได้รอหรอก";
   const styled = fishSpeechText(text, speechStyle(text), "s2.1-pro-free", "th");
-  assert.match(styled, /standard Central Thai accent/);
-  assert.match(styled, /no regional or Isan accent/);
+  assert.match(styled, /พูดไทยกลาง/);
+  assert.match(styled, /เขิน/);
   assert.equal(styled.replace(/^\[[^\]]+\] /, ""), text);
-  assert.match(fishSpeechText(text, speechStyle(text), "s2-pro"), /standard Central Thai accent/);
+  assert.match(fishSpeechText(text, speechStyle(text), "s2-pro"), /พูดไทยกลาง/);
 });
 
 test("other languages and older models do not get Thai voice instructions", () => {
@@ -96,4 +96,33 @@ test("delivery adjustments respect the voice speed slider limits", () => {
   assert.equal(speechSpeed(2, speechStyle("ไม่ได้รอ")), 1.2);
   assert.equal(speechSpeed(1.1, speechStyle("เล่ามาสิ")), 1.1);
   assert.equal(speechSpeed("fast", speechStyle("เล่ามาสิ")), .98);
+});
+
+test("Thai numbers use the context's reading and leave chat text untouched", () => {
+  const cases = [
+    ["ราคา 1,250 บาท ลด 15%", "ราคา หนึ่งพันสองร้อยห้าสิบบาท ลด สิบห้าเปอร์เซ็นต์"],
+    ["เจอกันเวลา 09:30 น.", "เจอกันเวลา เก้านาฬิกา สามสิบนาที"],
+    ["ค่าเท่ากับ 3.14", "ค่าเท่ากับ สามจุดหนึ่ง สี่"],
+    ["โทร 0812345678", "โทร ศูนย์ แปด หนึ่ง สอง สาม สี่ ห้า หก เจ็ด แปด"],
+    ["วันที่ 8 ตุลาคม 2026", "วันที่ แปด ตุลาคม สองพันยี่สิบหก"],
+    ["วันที่ 8/10/2026", "วันที่ แปด ตุลาคม สองพันยี่สิบหก"],
+    ["เงิน 21.50 บาท", "เงิน ยี่สิบเอ็ดบาทห้าสิบสตางค์"],
+    ["เวลา 00:00 น.", "เวลา ศูนย์นาฬิกาตรง"],
+    ["ค่า -0.05 ลด 2.5%", "ค่า ลบศูนย์จุดศูนย์ ห้า ลด สองจุดห้าเปอร์เซ็นต์"],
+    ["มี 101 คน และ 1000001 ชิ้น", "มี หนึ่งร้อยเอ็ด คน และ หนึ่งล้านหนึ่ง ชิ้น"],
+    ["ราคา ๑๒๕ บาท", "ราคา หนึ่งร้อยยี่สิบห้าบาท"],
+    ["ฉันใช้ TypeScriptเวอร์ชัน 2", "ฉันใช้ TypeScript เวอร์ชัน สอง"],
+    ["จะ-จะ-จะบอกว่าไม่ได้รอเธอ 15 นาทีหรอก!", "จะ… จะ… จะบอกว่าไม่ได้รอเธอ สิบห้า นาทีหรอก!"],
+  ];
+  for (const [input, expected] of cases) {
+    assert.equal(speechText(input, "th"), expected, input);
+    assert.equal(speechText(speechText(input, "th"), "th"), expected, `idempotent: ${input}`);
+  }
+  assert.equal(speechText("Price 1,250 baht, 15%", "en"), "Price 1,250 baht, 15%");
+  assert.equal(speechText("ใช้ UTF-8 และ v2.1", "th"), "ใช้ UTF-8 และ v2.1");
+});
+
+test("Markdown stage directions and links do not become spoken instructions", () => {
+  assert.equal(speechText("# **ไม่ใช่ซะหน่อย**\n*กอดอก* ด- ด- เดี๋ยว! [ถอนหายใจ] [อ่านนี่](https://example.com) ![รูป](https://example.com/a.png) www.example.com\n```js\nthrow 123\n```", "th"), "ไม่ใช่ซะหน่อย ด… ด… เดี๋ยว! อ่านนี่");
+  assert.equal(speechText("**ราคา 15 บาท** (ค่า 3.14)", "th"), "ราคา สิบห้าบาท (ค่า สามจุดหนึ่ง สี่)");
 });

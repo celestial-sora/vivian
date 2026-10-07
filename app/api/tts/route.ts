@@ -27,7 +27,7 @@ export async function POST(request: Request): Promise<Response> {
   const { text, speed, language } = body as Record<string, unknown>;
   if (typeof text !== "string" || text.length > 5000) return NextResponse.json({ error: "Text is required and must be under 5000 characters", status: 400 }, { status: 400 });
   const speechLanguage = language === "global" || language === "en" || language === "ja" || language === "ko" || language === "zh" || language === "th" ? language : "global";
-  const cleanText = speechText(text);
+  const cleanText = speechText(text, speechLanguage);
   if (!cleanText) return NextResponse.json({ error: "Text must contain spoken words", status: 400 }, { status: 400 });
   const style = speechStyle(cleanText);
   const model = process.env.FISH_AUDIO_MODEL ?? "s2.1-pro-free";

@@ -38,11 +38,83 @@ function normalizeStammers(value: string): string {
     });
 }
 
-export function speechText(value: string): string {
-  return normalizeStammers(value.split(/\n\s*(?:แหล่งข้อมูล|sources)\s*:/i)[0]
+const thaiDigits = ["ศูนย์", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า"];
+
+function readDigits(value: string): string {
+  return [...value].map(digit => thaiDigits[Number(digit)]).join(" ");
+}
+
+function readInteger(value: string): string {
+  const digits = value.replace(/,/g, "").replace(/^0+(?=\d)/, "");
+  if (digits.length > 6) {
+    const tail = digits.slice(-6);
+    return readInteger(digits.slice(0, -6)) + "ล้าน" + (Number(tail) ? readInteger(tail) : "");
+  }
+  if (!Number(digits)) return "ศูนย์";
+  const places = ["", "สิบ", "ร้อย", "พัน", "หมื่น", "แสน"];
+  return [...digits].map((digit, index) => {
+    const n = Number(digit), place = digits.length - index - 1;
+    if (!n) return "";
+    if (place === 1) return (n === 1 ? "" : n === 2 ? "ยี่" : thaiDigits[n]) + "สิบ";
+    if (place === 0 && n === 1 && digits.length > 1) return "เอ็ด";
+    return thaiDigits[n] + places[place];
+  }).join("");
+}
+
+function readNumber(value: string): string {
+  const [integer, fraction] = value.split(".");
+  return readInteger(integer) + (fraction === undefined ? "" : "จุด" + readDigits(fraction));
+}
+
+// Ordered by context: phone identifiers, clock time and money are not counts.
+// Do not convert years between Gregorian and Buddhist calendars.
+export function thaiSpeechNumbers(value: string): string {
+  const months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+  const identifiers: string[] = [];
+  const protectedText = value.replace(/\b[A-Za-z][A-Za-z0-9]*(?:[.-][A-Za-z0-9]+)*\b/g, token => {
+    if (!/\d/.test(token)) return token;
+    identifiers.push(token);
+    return "\uE000" + String.fromCharCode(0xE100 + identifiers.length - 1) + "\uE001";
+  });
+  return protectedText.replace(/[๐-๙]/g, digit => String(digit.charCodeAt(0) - 0x0e50))
+    .replace(/(วันที่\s*)([0-3]?\d)[/](0?[1-9]|1[0-2])[/](\d{4})(?!\d)/gu,
+      (match: string, prefix: string, day: string, month: string, year: string) => {
+        const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+        return date.getUTCDate() === Number(day) && date.getUTCMonth() === Number(month) - 1
+          ? prefix + readInteger(day) + " " + months[Number(month) - 1] + " " + readInteger(year) : match;
+      })
+    .replace(/(?<![\p{L}\p{N}])(?:0\d{1,2}[- ]?\d{3}[- ]?\d{4})(?!\d)/gu,
+      phone => readDigits(phone.replace(/[- ]/g, "")))
+    .replace(/(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?:\s*น\.)?(?!\d)/g,
+      (_match, hour: string, minute: string) => readInteger(hour) + "นาฬิกา" + (Number(minute) ? " " + readInteger(minute) + "นาที" : "ตรง"))
+    .replace(/(?<![\p{L}\p{N}])(-?\d[\d,]*(?:\.\d+)?)\s*(บาท|฿)/gu,
+      (_match, amount: string) => {
+        const negative = amount.startsWith("-") ? "ลบ" : "";
+        const [baht, fraction] = amount.replace(/^-/, "").split(".");
+        if (fraction && fraction.length <= 2) {
+          const satang = fraction.padEnd(2, "0");
+          return negative + readInteger(baht) + "บาท" + (Number(satang) ? readInteger(satang) + "สตางค์" : "ถ้วน");
+        }
+        return negative + readNumber(amount.replace(/^-/, "")) + "บาท";
+      })
+    .replace(/(?<![\p{L}\p{N}])(-?\d[\d,]*(?:\.\d+)?)\s*%/gu,
+      (_match, number: string) => (number.startsWith("-") ? "ลบ" : "") + readNumber(number.replace(/^-/, "")) + "เปอร์เซ็นต์")
+    .replace(/(?<![\p{L}\p{N}])(-?\d+(?:,\d{3})*(?:\.\d+)?)(?![\p{L}\p{N}]|[.-]\d)/gu,
+      (_match, number: string) => (number.startsWith("-") ? "ลบ" : "") + readNumber(number.replace(/^-/, "")))
+    .replace(/\uE000([\uE100-\uF8FF])\uE001/g, (_match, index: string) => identifiers[index.charCodeAt(0) - 0xE100]);
+}
+
+export function speechText(value: string, language = "global"): string {
+  const cleaned = normalizeStammers(value.split(/\n\s*(?:แหล่งข้อมูล|sources)\s*:/i)[0]
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
     .replace(/\[([^\]]+)\]\(https?:\/\/[^)]+\)/g, "$1")
     .replace(/https?:\/\/\S+/g, "")
     .replace(/[（(]([^()（）\n]{1,120})[）)]/gu, (match: string, content: string) => stageDirection.test(content) ? " " : match)
+    .replace(/\*{1,2}([^*\n]{1,120})\*{1,2}/gu, (match: string, content: string) => stageDirection.test(content) ? " " : match)
+    .replace(/\[([^\]\n]{1,120})\]/gu, (match: string, content: string) => stageDirection.test(content) ? " " : content)
+    .replace(/```[^\n]*\n[\s\S]*?```/g, " ")
+    .replace(/^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+\.\s+)/gm, "")
+    .replace(/(?:https?:\/\/|www\.)\S+/g, "")
     .replace(/[*_`~〜～]/g, "")
     .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "")
     .replace(/([ก-๙])([A-Za-z])/g, "$1 $2")
@@ -52,6 +124,7 @@ export function speechText(value: string): string {
     .replace(/\.{3,}|…+/g, "…")
     .replace(/\s+/g, " ")
     .trim());
+  return language === "th" || (language === "global" && /[ก-๙]/u.test(cleaned)) ? thaiSpeechNumbers(cleaned) : cleaned;
 }
 
 export function speechStyle(value: string): SpeechStyle {
@@ -75,11 +148,16 @@ export function speechStyle(value: string): SpeechStyle {
 export function fishSpeechText(cleanText: string, style: SpeechStyle, model: string, language = "global"): string {
   // S2 supports free-form inline delivery cues. Other configured models keep
   // plain text so they cannot speak the direction as part of the reply.
-  if (!/^s2(?:[.-]|$)/i.test(model)) return cleanText;
+  if (!["s2-pro", "s2.1-pro", "s2.1-pro-free"].includes(model)) return cleanText;
   const thai = language === "th" || (language === "global" && /[ก-๙]/u.test(cleanText));
-  const cue = thai
-    ? `${style.cue.slice(0, -1)}, standard Central Thai accent, clear Thai pronunciation, no regional or Isan accent]`
-    : style.cue;
+  // Bracket cues are ordinary text with learned acoustic associations, not
+  // guaranteed controls. Keep Thai cues short and positive to reduce interference.
+  const cue = thai ? {
+    reserved: "[พูดไทยกลาง น้ำเสียงเป็นกันเอง สุขุม แอบเชิดนิด ๆ]",
+    teasing: "[พูดไทยกลาง หยอกอย่างเป็นกันเอง]",
+    flustered: "[พูดไทยกลาง เขิน กลบเกลื่อนความรู้สึก]",
+    gentle: "[พูดไทยกลาง ห่วงใยอย่างเก็บอาการ]",
+  }[style.delivery] : style.cue;
   return `${cue} ${cleanText}`;
 }
 
