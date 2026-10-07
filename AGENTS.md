@@ -360,7 +360,7 @@ This section is the current source of truth for continuing work. Read it before 
 ### Current UI direction
 
 - Full-screen Live2D companion UI optimized for iPhone/iPad portrait and landscape.
-- The bottom composer uses one translucent glass surface, a 56px height and 44px touch controls. Portrait tablets (600–1100px wide) keep 16px side margins; desktop keeps a 760px cap. Do not reintroduce the old 320px width subtraction or nested button blur. Preserve reduced-transparency/contrast fallbacks and align speech/attachment offsets above the compact bar.
+- The bottom composer uses one highly translucent glass surface with a gentle 6px backdrop blur (110% saturation), opaque foreground text/icons with contrast shadows, a 50px height, 40px visible controls with 44px touch areas, and 18px Lucide SVG icons. There is no Chat button in the composer; Conversations remains accessible through the floating menu. Portrait tablets (600–1100px wide) keep 16px side margins; desktop keeps a 760px cap. Do not reintroduce the old 320px width subtraction or nested button blur. Preserve reduced-transparency/contrast fallbacks and align speech/attachment offsets above the compact bar.
 - Keep the bottom input pill and full-screen scene. Vivian's speech and STT preview are frameless text above the composer; each new line rises and sharpens into view. Thinking uses animated text/dots, with reduced-motion support. The menu opens as a floating overlay without resizing the scene.
 - Latest UI polish adds smoother hover/active transitions, SVG feedback, focus glow, and the Memory icon.
 - Keep the purple witch model and existing layout direction. Do not replace the model or redesign the structure without explicit approval.

@@ -1663,13 +1663,12 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         </div>
       )}
       <form className="companion-input" onSubmit={(event) => { event.preventDefault(); void sendMessage(); }}>
-        <button className={`circle-control ${recording ? "is-recording" : "is-muted"}`} type="button" onClick={toggleRecording} aria-pressed={recording} aria-label={recording ? "Mute microphone" : "Microphone muted, click to unmute"}><Icon name={recording ? "mic" : "micOff"}/></button>
-        <button className={`circle-control ${cameraActive ? "is-active is-camera-active" : ""}`} type="button" onClick={toggleCamera} aria-pressed={cameraActive} aria-label={cameraActive ? "ปิดกล้อง Live" : "เปิดกล้อง Live"}><Icon name="video"/></button>
-        <button className={`circle-control ${attachedImage ? "is-active" : ""}`} type="button" onClick={() => fileInputRef.current?.click()} aria-label="แนบรูปภาพ"><Icon name="clip"/></button>
+        <button className={`circle-control ${recording ? "is-recording" : "is-muted"}`} type="button" onClick={toggleRecording} aria-pressed={recording} aria-label={recording ? "Mute microphone" : "Microphone muted, click to unmute"}><Icon name={recording ? "mic" : "micOff"} size={18}/></button>
+        <button className={`circle-control ${cameraActive ? "is-active is-camera-active" : ""}`} type="button" onClick={toggleCamera} aria-pressed={cameraActive} aria-label={cameraActive ? "ปิดกล้อง Live" : "เปิดกล้อง Live"}><Icon name="video" size={18}/></button>
+        <button className={`circle-control ${attachedImage ? "is-active" : ""}`} type="button" onClick={() => fileInputRef.current?.click()} aria-label="แนบรูปภาพ"><Icon name="clip" size={18}/></button>
         <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleImageUpload} tabIndex={-1} />
         <input value={message} onChange={(event) => setMessage(event.target.value)} placeholder={recording ? "กำลังฟัง... กดไมค์เพื่อ Mute" : cameraActive ? "กล้อง Live กำลังทำงาน... พิมพ์คุยได้" : "Talk to Vivian"} aria-label="ข้อความถึง Vivian" />
-        <button className="send-text" type="submit" disabled={sending || !history.ready || (!message.trim() && !attachedImage)} aria-label="ส่งข้อความ"><Icon name="send" size={22}/></button>
-        <button className="text-send" type="button" onClick={() => openPanel("conversations")}><Icon name="message" size={23}/><span>Chat</span></button>
+        <button className="send-text" type="submit" disabled={sending || !history.ready || (!message.trim() && !attachedImage)} aria-label="ส่งข้อความ"><Icon name="send" size={18}/></button>
       </form>
     </section>
     <div className={`floating-overlay ${sidebarOpen ? "is-visible" : ""}`} aria-hidden={!sidebarOpen}>

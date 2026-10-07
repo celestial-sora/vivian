@@ -470,3 +470,13 @@ Follow up only where needed: verify live Google provider configuration and produ
 - Added client load on mount/focus/visibility and 15-second visible polling, optimistic slider updates, serialized/coalesced writes, stale-read protection and visible save/error/retry status. No load operation writes defaults to the cloud.
 - Migration `20261007030145_global_voice_preferences.sql` creates a dedicated service-only RLS table, preserving voice settings through companion reset.
 - Verification: 20 voice-preference and speech/TTS route tests pass; production build, TypeScript, targeted ESLint and diff check pass. The initial cloud diagnosis targeted the wrong project from the connector list. Production Vercel server/client URLs both point to `frqixaqknuyerovnrndq` (`ai-waifu`), which is ACTIVE_HEALTHY. Migration `20261007030145` / `global_voice_preferences` is confirmed installed there. Verified singleton row, speed bounds, RLS and service-role read/upsert in a rolled-back transaction; original .98 retained. Deployment `dpl_FAGbac19cnQ5NoLt319iGV5JqraZ` is READY at commit `f965f32`. No browser session was available to verify authenticated slider interaction across real accounts. Do not resume the unrelated inactive `xcshcbuginjxpunmpzoo` project for Vivian.
+
+## Compact composer — 2026-10-07
+
+- Removed the bottom Chat shortcut; Conversations remains in the floating menu. Preserved existing widths, portrait tablet margins, safe-area behavior, glass surface, focus and contrast fallbacks. Reduced the bar from 56px to 50px, visible controls from 44px to 40px, and composer icons to 18px. Expanded invisible touch areas to 44px and moved speech/attachment offsets down by 6px.
+- Existing SVGs are from Lucide on GitHub; documented source/mapping in `public/icons/README.md` and kept the bundled license.
+- Production build, TypeScript and diff whitespace checks pass. Browser viewport verification was attempted but unavailable because the Chromium download returned a truncated archive; authenticated device interaction has not been verified in this session.
+
+## Light composer glass — 2026-10-07
+
+- On user follow-up, lowered composer tint and backdrop blur from 16px/165% saturation to 6px/110% so the scene remains visible. Kept foreground text/icons opaque, brightened placeholder text and added local contrast shadows. Preserved accessibility contrast/reduced-transparency fallbacks and all compact sizing. User explicitly authorized one `git push origin main` after this adjustment.
