@@ -18,6 +18,7 @@ function fixture({ paused = true, assets = [], fail = false, same = false } = {}
   const state = { paused, packages: [old, selected], active: 'old', importing: false, calls: [] };
   const bindings = {
     modelImporting: false, modelPaused: paused, modelPackages: state.packages,
+    modelCloudRequestRef: { current: null },
     cloudLibrary: { userId: 'account', models: [{ id: selected.id }] },
     setModelImporting: (value) => { state.importing = value; },
     setModelPaused: (value) => { state.paused = value; },
@@ -47,7 +48,7 @@ test('explicit cloud selection resumes rendering after a crash pause and release
   assert.equal(state.paused, false);
   assert.equal(state.importing, false);
   assert.equal(state.notice, null);
-  assert.deepEqual(state.calls, ['frame', 'hydrate', 'save']);
+  assert.deepEqual(state.calls, ['frame', 'hydrate']);
   assert.equal(state.packages[0].assets.length, 0);
   assert.equal(state.packages[1].assets.length, 1);
 });

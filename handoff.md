@@ -480,3 +480,9 @@ Follow up only where needed: verify live Google provider configuration and produ
 ## Light composer glass — 2026-10-07
 
 - On user follow-up, lowered composer tint and backdrop blur from 16px/165% saturation to 6px/110% so the scene remains visible. Kept foreground text/icons opaque, brightened placeholder text and added local contrast shadows. Preserved accessibility contrast/reduced-transparency fallbacks and all compact sizing. User explicitly authorized one `git push origin main` after this adjustment.
+
+## Live2D refresh restoration and startup latency — 2026-10-07
+
+- Found a 15-second post-render crash breadcrumb that could survive normal reloads, causing startup to pause until manual selection. Clear it immediately after rendering and on pagehide. Legacy/interrupted loads receive one automatic retry; repeated GPU interruptions still pause. Preserve retry state across hydration effect cleanup and protect newer model guards from old cleanup.
+- Start readable local catalog selections before awaiting the cloud request (previously every startup waited up to the 12-second catalog timeout). Only missing/unreadable originals wait for cloud recovery. Preserve saved cloud-only outfit IDs, owner filtering, hydrated object identity on remote reconciliation, cancellation, and existing GPU budgets/render-copy cache. Removed the redundant full-package IndexedDB write on manual selection; cloud recovery already saves once.
+- Verification: 43 existing model tests plus 9 startup regression tests pass; TypeScript, production build, targeted helper/test ESLint and whitespace checks pass. Regressions execute actual startup/selection/guard/hydration code with delayed cloud and pagehide fixtures. Real authenticated browser/device timings and rendering remain unmeasured; cold cloud downloads and large atlas processing still depend on package size and device.

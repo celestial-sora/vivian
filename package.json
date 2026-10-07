@@ -15,7 +15,7 @@
     "test:companion": "node --experimental-strip-types --test tests/companion.test.mjs",
     "test:auth": "node --experimental-strip-types --test tests/auth-policy.test.mjs",
     "test:auth:integration": "node --test tests/auth.integration.test.mjs",
-    "test:models": "node --experimental-strip-types --test tests/local-models.test.mjs tests/model-textures.test.mjs tests/model-rest-state.test.mjs tests/model-wind.test.mjs tests/model-runtime.test.mjs tests/png-render-copy.test.mjs tests/model-selection.test.mjs",
+    "test:models": "node --experimental-strip-types --test tests/local-models.test.mjs tests/model-textures.test.mjs tests/model-rest-state.test.mjs tests/model-wind.test.mjs tests/model-runtime.test.mjs tests/png-render-copy.test.mjs tests/model-selection.test.mjs tests/model-startup.test.mjs",
     "test:storage": "node --test tests/cloud-storage.test.mjs",
     "test:storage:postgres": "node --test tests/storage-postgres.test.mjs",
     "test:scenes": "node --experimental-strip-types --test tests/scenes.test.mjs tests/scene-preload.test.mjs",

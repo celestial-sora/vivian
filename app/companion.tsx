@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { captureModelRestState, restoreModelRestState, type ModelRestState, type CubismRestModel } from "@/lib/model-rest-state";
 import { attachModelWind, type WindInternalModel } from "@/lib/model-wind";
 import { waitForCubismCore } from "@/lib/model-runtime";
+import { shouldPauseModelStartup, clearModelLoadState } from "@/lib/model-startup";
 import { useConversationHistory } from "@/lib/use-conversation-history";
 import { historyMessage, HISTORY_CACHE_KEY, type HistoryMessage, type HistoryConversation } from "@/lib/chat-history";
 import { authFetch } from "@/lib/auth/fetch";
@@ -19,12 +20,16 @@ import { StorageStatusPanel } from "@/app/components/storage-status";
 import { createVoiceActivity, updateVoiceActivity, type VoiceActivityState } from "@/lib/voice-activity";
 import type { SceneDecision } from "@/lib/scenes";
 
-async function availableModelPackage(pack: ModelPackage, cloud: CloudLibrary | null, signal?: AbortSignal): Promise<ModelPackage | undefined> {
-  const remote = cloud?.models.find((model) => model.id === pack.id);
+async function availableModelPackage(pack: ModelPackage, cloud: CloudLibrary | Promise<CloudLibrary | null> | null, signal?: AbortSignal): Promise<ModelPackage | undefined> {
   return hydrateModelPackage(pack, {
     signal,
-    recover: remote && cloud ? async () => {
-      const downloaded = await downloadCloudModel(remote, cloud.userId, signal);
+    recover: cloud ? async () => {
+      // A readable local cache never waits for the cloud request.
+      const library = await cloud;
+      signal?.throwIfAborted();
+      const remote = library?.models.find((model) => model.id === pack.id);
+      if (!remote || !library) throw new Error("Model files are unavailable on this device. Reconnect to the cloud or import the original model again.");
+      const downloaded = await downloadCloudModel(remote, library.userId, signal);
       await saveModelPackage(downloaded).catch(() => {});
       return downloaded;
     } : undefined,
@@ -172,7 +177,10 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   const [modelImporting, setModelImporting] = useState(false);
   const [modelStatus, setModelStatus] = useState<"empty" | "loading" | "ready" | "error">("empty");
   const [modelNotice, setModelNotice] = useState<string | null>(null);
+  const modelCloudRequestRef = useRef<Promise<CloudLibrary | null> | null>(null);
   const [cloudLibrary, setCloudLibrary] = useState<CloudLibrary | null>(null);
+  const cloudLibraryRef = useRef<CloudLibrary | null>(null);
+  cloudLibraryRef.current = cloudLibrary;
   const [modelPreview, setModelPreview] = useState<string | null>(null);
   const [textureQuality, setTextureQuality] = useState<"auto" | "original">("auto");
   const [modelReload, setModelReload] = useState(0);
@@ -244,40 +252,47 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
+    const cloudRequest = getCloudModels(AbortSignal.any([controller.signal, AbortSignal.timeout(12_000)])).catch(() => null);
+    modelCloudRequestRef.current = cloudRequest;
     void (async () => {
-      const [local, remote] = await Promise.allSettled([loadModelCatalog(), getCloudModels(AbortSignal.any([controller.signal, AbortSignal.timeout(12_000)]))]);
+      const local = await loadModelCatalog().catch(() => [] as ModelPackage[]);
       if (cancelled) return;
-      const cloud = remote.status === "fulfilled" ? remote.value : null;
-      setCloudLibrary(cloud);
-      const packages = (local.status === "fulfilled" ? local.value : []).filter((pack) => !pack.cloudOwner || (pack.cloudOwner === accountId && (!cloud || cloud.models.some((model) => model.id === pack.id))));
-      for (const model of cloud?.models ?? []) if (!packages.some((pack) => pack.id === model.id)) packages.push(cloudModelPlaceholder(model));
-      setModelPackages(packages);
-      if (!cloud) setModelNotice("Cloud sync is unavailable. Models saved on this device still work.");
+      const packages = local.filter((pack) => !pack.cloudOwner || pack.cloudOwner === accountId);
       const saved = localStorage.getItem("vivian-local-model");
       const selected = packages.some((pack) => pack.models.some((model) => model.id === saved)) ? saved : packages[0]?.models[0]?.id ?? null;
-      let interrupted = false;
-      // A killed Safari page cannot run cleanup or catch handlers. A breadcrumb
-      // lets its next load show usable chat instead of repeating the same load.
-      try {
-        if (selected && sessionStorage.getItem("vivian-model-loading") === selected) {
-          interrupted = true;
-          setModelPaused(true);
-          setModelStatus("error");
-          setModelNotice("The previous model load was interrupted. Auto loading is paused; use Reload model to retry with Auto quality.");
-        }
-      } catch { /* Storage restrictions do not block chat. */ }
-      const pack = packages.find((entry) => entry.models.some((model) => model.id === selected));
-      if (pack && !pack.assets.length && !interrupted) {
+      const restoreStartup = (selected: string | null) => {
         try {
-          const downloaded = await availableModelPackage(pack, cloud, controller.signal);
-          if (!downloaded) throw new Error("Model files are unavailable.");
-          if (cancelled) return;
-          packages.splice(packages.indexOf(pack), 1, downloaded);
-          setModelPackages([...packages]);
-          await saveModelPackage(downloaded).catch(() => {});
-        } catch (error) { if (!cancelled) setModelNotice(error instanceof Error ? error.message : "Could not load the cloud model. Select it again to retry."); return; }
+          if (shouldPauseModelStartup(sessionStorage, selected)) {
+            setModelPaused(true);
+            setModelStatus("error");
+            setModelNotice("Model loading was interrupted twice. Use Reload model to retry with Auto quality.");
+          }
+        } catch { /* Storage restrictions do not block chat. */ }
+      };
+      restoreStartup(selected);
+      setModelPackages(packages);
+      setActiveModelId(selected);
+      // Render cached originals immediately; cloud latency is independent.
+      if (selected) setModelsReady(true);
+      const cloud = await cloudRequest;
+      if (cancelled) return;
+      setCloudLibrary(cloud);
+      if (!cloud) {
+        setModelNotice((notice) => notice ?? "Cloud sync is unavailable. Models saved on this device still work.");
+        return;
       }
-      if (!cancelled) setActiveModelId(selected);
+      setModelPackages((current) => {
+        // Retain hydrated object identities so catalog sync doesn't reload GPU assets.
+        const merged = current.filter((pack) => !pack.cloudOwner || (pack.cloudOwner === accountId && cloud.models.some((model) => model.id === pack.id)));
+        for (const model of cloud.models) if (!merged.some((pack) => pack.id === model.id)) merged.push(cloudModelPlaceholder(model));
+        return merged;
+      });
+      if (!selected) {
+        const remotePackages = cloud.models.map(cloudModelPlaceholder);
+        const remoteSelected = remotePackages.some((pack) => pack.models.some((model) => model.id === saved)) ? saved : remotePackages[0]?.models[0]?.id ?? null;
+        restoreStartup(remoteSelected);
+        setActiveModelId((current) => current ?? remoteSelected);
+      }
     })().catch(() => {
       if (!cancelled) setModelNotice("Model storage is unavailable. Please try again.");
     }).finally(() => { if (!cancelled) setModelsReady(true); });
@@ -353,10 +368,10 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       // validate even in-memory Blob handles after a Safari reload.
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       setModelNotice("Loading model files…");
-      const downloaded = await availableModelPackage(pack, cloudLibrary);
+      const downloaded = await availableModelPackage(pack, cloudLibrary ?? modelCloudRequestRef.current);
       if (!downloaded) throw new Error("Model files are unavailable.");
       if (!downloaded.models.some((model) => model.id === id)) throw new Error("This model is no longer in the package. Select another model.");
-      if (downloaded !== pack) await saveModelPackage(downloaded).catch(() => {});
+      // Local originals are already saved; cloud recovery persists its copy once.
       setModelPackages((current) => current.map((entry) => entry.id === pack.id ? downloaded : modelCatalogEntry(entry)));
       setActiveModelId(id);
       setModelNotice(null);
@@ -549,14 +564,19 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
     let handleOrientationChange = () => {};
     let resizeFrame: number | undefined;
     let resizeTimeout: number | undefined;
-    let stableTimer: number | undefined;
     let disposed = false;
     let ownedModel: any;
     const loadId = ++modelLoadIdRef.current;
     const clearBreadcrumb = () => {
       if (loadId !== modelLoadIdRef.current) return;
-      try { if (sessionStorage.getItem("vivian-model-loading") === activeModel.id) sessionStorage.removeItem("vivian-model-loading"); } catch { /* Optional crash recovery. */ }
+      try { clearModelLoadState(sessionStorage, activeModel.id); } catch { /* Optional crash recovery. */ }
     };
+    const clearRecovery = () => {
+      if (loadId !== modelLoadIdRef.current) return;
+      try { clearModelLoadState(sessionStorage, activeModel.id, true); } catch { /* Optional crash recovery. */ }
+    };
+    // Normal refresh/navigation is not a WebContent crash.
+    window.addEventListener("pagehide", clearRecovery);
     try { sessionStorage.setItem("vivian-model-loading", activeModel.id); } catch { /* Optional crash recovery. */ }
     void (async () => {
       try {
@@ -596,7 +616,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         const mobileDevice = isAppleMobile || /Android|Mobile/i.test(navigator.userAgent);
         // Catalog entries deliberately have no assets. Every path into this
         // effect (refresh, deletion, retry or selection) must hydrate first.
-        const renderPackage = await availableModelPackage(activePackage, cloudLibrary, textureAbort.signal);
+        const renderPackage = await availableModelPackage(activePackage, cloudLibraryRef.current ?? modelCloudRequestRef.current, textureAbort.signal);
         textureAbort.signal.throwIfAborted();
         if (!renderPackage) throw new Error("Model files are unavailable on this device. Download the cloud copy or import the original model again.");
         if (renderPackage !== activePackage) {
@@ -676,7 +696,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         app.renderer.render(app.stage);
         if (app.renderer.gl.isContextLost()) throw new Error("Graphics memory is unavailable. Try Auto texture quality and reload the model.");
         setModelStatus("ready");
-        stableTimer = window.setTimeout(clearBreadcrumb, 15_000);
+        clearRecovery();
         if (!activeModel.previewPath) {
           try {
             app.renderer.render(app.stage);
@@ -701,7 +721,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
         window.addEventListener("orientationchange", handleOrientationChange);
         window.visualViewport?.addEventListener("resize", queueResize);
       } catch (error) {
-        clearBreadcrumb();
+        clearRecovery();
         if (ownedModel) {
           app?.stage.removeChild(ownedModel);
           ownedModel.destroy({ children: true, texture: true, baseTexture: true });
@@ -723,7 +743,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       modelLoadIdRef.current += 1;
       if (resizeFrame) cancelAnimationFrame(resizeFrame);
       if (resizeTimeout) window.clearTimeout(resizeTimeout);
-      if (stableTimer) window.clearTimeout(stableTimer);
+      window.removeEventListener("pagehide", clearRecovery);
       window.removeEventListener("resize", queueResize);
       window.removeEventListener("orientationchange", handleOrientationChange);
       window.visualViewport?.removeEventListener("resize", queueResize);
@@ -739,7 +759,7 @@ export default function Companion({ accountEmail, accountId }: { accountEmail: s
       }
       releaseResources?.();
     };
-  }, [preferencesReady, modelsReady, activeModel, activePackage, textureQuality, modelReload, graphicsLost, modelPaused, cloudLibrary?.userId]);
+  }, [preferencesReady, modelsReady, activeModel, activePackage, textureQuality, modelReload, graphicsLost, modelPaused]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
