@@ -4,7 +4,8 @@ import { authFetch } from "@/lib/auth/fetch";
 import { notifyStorageChanged } from "@/lib/storage-status";
 import type { SceneDecision, ScenePreferences, VivianScene } from "@/lib/scenes";
 
-import { preloadSceneImage, preloadSceneLibrary } from "@/lib/scene-preload";
+import { startTiming, cancelTiming, type LocalTiming } from "@/lib/performance";
+import { preloadSceneLibrary } from "@/lib/scene-preload";
 export { preloadSceneImage } from "@/lib/scene-preload";
 
 export async function sceneRequest<T>(path: string, options?: RequestInit): Promise<T> {
@@ -16,64 +17,93 @@ export async function sceneRequest<T>(path: string, options?: RequestInit): Prom
 }
 const defaults: ScenePreferences = { autoScene: false, activeSceneId: null, preset: null, revision: "" };
 const noPresetImages: string[] = [];
-export function useSceneLibrary(presetImages: string[] = noPresetImages) {
+export function useSceneLibrary(presetImages: string[] = noPresetImages, accountId = "default", backgroundReady = true) {
   const [scenes, setScenes] = useState<VivianScene[]>([]);
   const [preferences, setPreferences] = useState<ScenePreferences>(defaults);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [selectionTiming, setSelectionTiming] = useState<LocalTiming>();
+  const timingRef = useRef<LocalTiming | undefined>(undefined)
+  const writeQueue = useRef(Promise.resolve());
+  const pending = useRef(0);
+  const cacheKey = `vivian-scenes:${accountId}`;
   const generation = useRef(0);
   const mounted = useRef(true);
   const preferencesRef = useRef(preferences);
   const scenesRef = useRef(scenes);
   const refresh = useCallback(async () => {
+    const version = generation.current;
     const data = await sceneRequest<{ scenes: VivianScene[]; preferences: ScenePreferences }>("/api/scenes");
-    if (mounted.current) { scenesRef.current = data.scenes; preferencesRef.current = data.preferences; setScenes(data.scenes); setPreferences(data.preferences); setReady(true); setNotice(null); }
+    if (mounted.current) {
+      scenesRef.current = data.scenes; setScenes(data.scenes); setReady(true);
+      if (version === generation.current && !pending.current) { preferencesRef.current = data.preferences; setPreferences(data.preferences); setNotice(null); }
+    }
   }, []);
   const invalidateRequests = useCallback(() => { generation.current++; }, []);
   useEffect(() => {
     mounted.current = true;
+    queueMicrotask(() => {
+    if (!mounted.current) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(cacheKey) ?? "null");
+      if (saved && Array.isArray(saved.scenes) && saved.preferences && typeof saved.preferences.autoScene === "boolean") {
+        scenesRef.current = saved.scenes; preferencesRef.current = saved.preferences;
+        setScenes(saved.scenes); setPreferences(saved.preferences); setReady(true);
+      }
+    } catch { /* Optional metadata cache. */ }
     void refresh().catch((error: Error) => { if (mounted.current) setNotice(error.message); });
-    return () => { mounted.current = false; invalidateRequests(); };
-  }, [refresh, invalidateRequests]);
+    });
+    return () => { mounted.current = false; invalidateRequests(); cancelTiming(timingRef.current); };
+  }, [refresh, invalidateRequests, cacheKey]);
   useEffect(() => {
+    if (!backgroundReady) return;
     const abort = new AbortController();
     const active = scenes.find((scene) => scene.id === preferences.activeSceneId);
     const urls = [...(active ? [active.imageUrl] : []), ...scenes.map((scene) => scene.imageUrl), ...presetImages];
     void preloadSceneLibrary(urls, abort.signal);
     return () => { abort.abort(); };
-  }, [scenes, preferences.activeSceneId, presetImages]);
-  async function updatePreferences(value: Partial<ScenePreferences>) {
-    generation.current++;
-    setBusy(true); setNotice(null);
-    try {
-      const next = await sceneRequest<{ preferences: ScenePreferences }>("/api/scenes/preferences", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) });
-      preferencesRef.current = next.preferences; setPreferences(next.preferences);
-    } catch (error) { setNotice((error as Error).message); }
-    finally { setBusy(false); }
+  }, [scenes, preferences.activeSceneId, presetImages, backgroundReady]);
+  useEffect(() => {
+    if (!ready) return;
+    try { localStorage.setItem(cacheKey, JSON.stringify({ scenes, preferences })); } catch { /* Optional cache. */ }
+  }, [cacheKey, scenes, preferences, ready]);
+  function updatePreferences(value: Partial<ScenePreferences>) {
+    const version = ++generation.current;
+    const selection = value.activeSceneId !== undefined || value.preset !== undefined;
+    if (selection) {
+      cancelTiming(timingRef.current);
+      timingRef.current = startTiming("scene_click_to_visible");
+      setSelectionTiming(timingRef.current);
+    }
+    const patch = { ...value, ...(value.preset ? { activeSceneId: null } : {}), ...(value.activeSceneId ? { preset: null } : {}) };
+    const next = { ...preferencesRef.current, ...patch };
+    preferencesRef.current = next; setPreferences(next); setNotice(null);
+    pending.current++; setBusy(true);
+    // Ordered writes prevent an older PATCH from becoming the final server state.
+    // Presentation is already committed, independently of the persistence queue.
+    writeQueue.current = writeQueue.current.then(async () => {
+      try {
+        const saved = await sceneRequest<{ preferences: ScenePreferences }>("/api/scenes/preferences", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+        if (mounted.current && version === generation.current) { preferencesRef.current = saved.preferences; setPreferences(saved.preferences); }
+      } catch (error) {
+        if (mounted.current && version === generation.current) setNotice(`${(error as Error).message} Your scene is shown locally; select it again to retry saving.`);
+      } finally { pending.current--; if (mounted.current && !pending.current) setBusy(false); }
+    });
+    return writeQueue.current;
   }
-  async function selectScene(id: string) {
-    const scene = scenesRef.current.find((item) => item.id === id);
-    if (!scene) return;
-    generation.current++;
-    setBusy(true); setNotice(null);
-    try {
-      await preloadSceneImage(scene.imageUrl);
-      await updatePreferences({ activeSceneId: id });
-    } catch (error) { setNotice((error as Error).message); }
-    finally { setBusy(false); }
+  function selectScene(id: string) {
+    if (!scenesRef.current.some((item) => item.id === id)) return;
+    return updatePreferences({ activeSceneId: id });
   }
   function applyChatScene(decision: SceneDecision | undefined, requestGeneration: number) {
     if (generation.current !== requestGeneration || !preferencesRef.current.autoScene || !decision?.change) return;
     const scene = scenesRef.current.find((item) => item.id === decision.id);
     if (!scene) return;
-    // This work is deliberately detached from text/TTS completion.
-    void preloadSceneImage(scene.imageUrl).then(() => {
-      if (!mounted.current || generation.current !== requestGeneration || !preferencesRef.current.autoScene) return;
-      const next = { ...preferencesRef.current, activeSceneId: scene.id, preset: null };
-      preferencesRef.current = next; setPreferences(next);
-    }).catch(() => { /* Presentation failures keep the existing background. */ });
+    // Server decisions already persisted the preference; presentation stays local.
+    const next = { ...preferencesRef.current, activeSceneId: scene.id, preset: null };
+    preferencesRef.current = next; setPreferences(next);
   }
-  return { scenes, preferences, ready, busy, notice, getGeneration: () => generation.current, invalidateRequests, setNotice, refresh, selectScene, updatePreferences, applyChatScene };
+  return { scenes, preferences, ready, busy, notice, selectionTiming, getGeneration: () => generation.current, invalidateRequests, setNotice, refresh, selectScene, updatePreferences, applyChatScene };
 }
 export type SceneLibrary = ReturnType<typeof useSceneLibrary>;

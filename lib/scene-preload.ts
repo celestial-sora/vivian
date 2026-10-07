@@ -19,6 +19,8 @@ function trimLoadedImages(current: string): void {
     bytes -= entry.decodedBytes;
   }
 }
+export function isSceneImageReady(url: string): boolean { return Boolean(loadedImages.get(url)?.decodedBytes); }
+
 export function preloadSceneImage(url: string, priority: "auto" | "low" = "auto"): Promise<void> {
   const previous = loadedImages.get(url);
   if (previous) {

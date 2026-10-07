@@ -1,20 +1,27 @@
 "use client";
 import { useEffect, useState } from "react";
-import { preloadSceneImage } from "@/lib/scene-preload";
+import { isSceneImageReady, preloadSceneImage } from "@/lib/scene-preload";
+import { startTiming, finishTiming, cancelTiming, type LocalTiming } from "@/lib/performance";
 
-export function SceneBackground({ source }: { source: string }) {
-  const [layers, setLayers] = useState<string[]>([]);
+export function SceneBackground({ source, preview, timing }: { source: string; preview?: string; timing?: LocalTiming }) {
+  const [loaded, setLoaded] = useState({ source: "", fade: false });
+  const fullReady = loaded.source === source || isSceneImageReady(source);
   useEffect(() => {
     let cancelled = false;
+    const cacheHit = isSceneImageReady(source);
+    const loadTiming = startTiming("scene_load_to_full_image");
     void preloadSceneImage(source).then(() => {
-      if (!cancelled) setLayers((previous) => previous.at(-1) === source ? previous : [...previous.slice(-1), source]);
-    }).catch(() => { /* Retain the loaded scene/default without a flash. */ });
-    return () => { cancelled = true; };
+      if (!cancelled) { setLoaded({ source, fade: !cacheHit }); finishTiming(loadTiming, { cacheHit }); }
+    }).catch(() => { finishTiming(loadTiming, { cacheHit, failed: true }); });
+    return () => { cancelled = true; cancelTiming(loadTiming); };
   }, [source]);
   useEffect(() => {
-    if (layers.length < 2) return;
-    const timer = window.setTimeout(() => setLayers((previous) => previous.slice(-1)), 450);
-    return () => window.clearTimeout(timer);
-  }, [layers]);
-  return <>{layers.map((url, index) => <div key={url} className={`scene-background scene-layer${layers.length > 1 && index === layers.length - 1 ? " scene-entering" : ""}`} style={{ backgroundImage: `url("${url}")` }} aria-hidden="true" />)}</>;
+    // The target full image/preview/placeholder is in the DOM before this mark.
+    const frame = requestAnimationFrame(() => finishTiming(timing, { cacheHit: fullReady, presentation: fullReady ? "full" : preview ? "preview" : "placeholder" }));
+    return () => cancelAnimationFrame(frame);
+  }, [source, preview, timing, fullReady]);
+  return <>
+    <div key={`preview:${source}`} className="scene-background scene-layer" style={{ backgroundImage: preview ? `url("${preview}")` : "linear-gradient(145deg, #352944, #171b2c)" }} aria-hidden="true" />
+    {fullReady && <div key={source} className={`scene-background scene-layer${loaded.source === source && loaded.fade ? " scene-entering" : ""}`} style={{ backgroundImage: `url("${source}")` }} aria-hidden="true" />}
+  </>;
 }
