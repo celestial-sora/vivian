@@ -535,7 +535,8 @@ test("compiled hersona strong and latest custom instructions reach all dialogue 
     assert.match(prompt,/Intensity: strong/);
     assert.doesNotMatch(prompt,/Respond in Japanese/);
     assert.match(prompt,/ตอบด้วย ภาษาไทย เท่านั้น/);
-    assert.match(prompt,/ไม่บอกชื่อหรือแนะนำตัว/);
+    assert.match(prompt,/คำถามเกี่ยวกับตัว Vivian ทุกเรื่อง/);
+    assert.match(prompt,/เรื่องเดิมอีก 3–4 ครั้งในคนละ turn/);
     assert.ok(prompt.endsWith(customInstructions));
   }
 });
@@ -548,5 +549,21 @@ test("custom instructions are bounded; empty preferences still get persistent st
     if(customInstructions) {assert.ok(prompt.endsWith("x".repeat(2000)));assert.equal(prompt.includes("x".repeat(2001)),false);}
     else assert.doesNotMatch(prompt,/คำแนะนำล่าสุดของโซระ/);
     assert.doesNotMatch(prompt,/ตานี้ถูกถามชื่อ/);
+  }
+});
+
+
+test("self-question persistence reaches the provider as actual separate turns", async () => {
+  const messages = [{role:"user",content:"เธอชอบชาแบบไหน"}];
+  const followups=["บอกหน่อยสิ", "นะ อยากรู้เรื่องชาจริง ๆ", "ขออีกที ชาแบบไหนที่เธอชอบ"];
+  for(let count=0;count<=followups.length;count++) {
+    const fixture=chatFixture(); await fixture.post("",{messages});
+    const turns=fixture.calls.find(call=>call.kind==="groq").body.messages;
+    assert.equal(turns.filter(turn=>turn.role==="user").length,count+1);
+    assert.match(turns[0].content,/การถามซ้ำ 1–2 ครั้งยังต้องปากแข็ง/);
+    assert.match(turns[0].content,/การเปลี่ยนไปถามคนละเรื่องเกี่ยวกับเธอเริ่มใหม่/);
+    assert.match(turns[0].content,/ในข้อความเดียวไม่นับแทน turn จริง/);
+    assert.match(turns[0].content,/มนุษย์หรือ AI.*ตอบตามจริง/);
+    if(count<followups.length)messages.push({role:"assistant",content:"ไม่บอกหรอก"},{role:"user",content:followups[count]});
   }
 });
