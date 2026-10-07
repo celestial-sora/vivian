@@ -20,7 +20,7 @@ export async function extractModelRar(file: File, maxBytes: number, maxFiles: nu
   }
 
   try {
-    const { createExtractorFromData } = await import("node-unrar-js/esm/index.esm");
+    const { createExtractorFromData } = await import("node-unrar-js/esm/index.esm.js");
     const extractor = await createExtractorFromData({ data: await file.arrayBuffer(), wasmBinary });
     const listed = extractor.getFileList();
     const headers = [...listed.fileHeaders];
