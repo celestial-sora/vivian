@@ -66,7 +66,7 @@ JEV is an optional decision service. It decides when fresh information, memory, 
 
 ## Give Vivian a look ✨
 
-Import a model you’re licensed to use from **Character → Models**. Choose a ZIP, RAR, or folder with the model manifest and all referenced files. Vivian supports Cubism 4 models and packages with multiple outfits—cute outfit changes included (｡˃ ᵕ ˂ ).
+Import a model you’re licensed to use from **Character → Models**. Choose a ZIP file or folder with the model manifest and all referenced files. Vivian supports Cubism 4 models and packages with multiple outfits—cute outfit changes included (｡˃ ᵕ ˂ ).
 
 Models are checked and stored in the browser. You can optionally save them to private R2 storage to use them on another device. Each model archive and expanded package must be 512 MiB or smaller. Without a model, text chat still works.
 

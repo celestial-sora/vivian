@@ -48,6 +48,3 @@ next-env.d.ts
 !/public/live2d/live2dcubismcore.min.js
 *.moc3
 *.cmo3
-
-# Generated browser UnRAR runtime
-/public/vendor/unrar.wasm

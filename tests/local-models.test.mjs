@@ -5,22 +5,11 @@ import { IDBFactory } from 'fake-indexeddb';
 import { zipSync, strToU8, deflateSync, Zip, ZipDeflate, ZipPassThrough, unzipSync } from 'fflate';
 import { bufferedBlobReader, bufferedBlobWriter } from '../lib/blob-reader.ts';
 import { loadRenderCopies, saveRenderCopies, clearRenderCopies } from '../lib/model-render-cache.ts';
-import { inspectPackage, importModelFiles, detectModelArchive, createModelResources, normalizePath, resolveAsset, loadModelPackages, loadModelCatalog, loadModelPackage, hydrateModelPackage, modelCatalogEntry, saveModelPackage, removeModelPackage } from '../lib/local-models.ts';
+import { inspectPackage, importModelFiles, createModelResources, normalizePath, resolveAsset, loadModelPackages, loadModelCatalog, loadModelPackage, hydrateModelPackage, modelCatalogEntry, saveModelPackage, removeModelPackage } from '../lib/local-models.ts';
 
 const manifest = () => ({ Version: 3, FileReferences: { Moc: 'avatar.moc3', Textures: ['textures/tex.png'], Physics: 'physics.json', Pose: 'pose.json', Expressions: [{ Name: 'Happy', File: 'expressions/happy.exp3.json' }, { Name: 'เศร้า #', File: 'expressions/เศร้า #.exp3.json' }], Motions: { Idle: [{ File: 'motions/idle.motion3.json' }], Wave: [{ File: 'motions/wave.motion3.json', Sound: 'hello.wav' }] } } });
 const asset = (path, content = 'test') => ({ path, blob: new Blob([content]) });
 const assets = () => [asset('pack/avatar.model3.json', JSON.stringify(manifest())), ...['avatar.moc3','textures/tex.png','physics.json','pose.json','expressions/happy.exp3.json','expressions/เศร้า #.exp3.json','motions/idle.motion3.json','motions/wave.motion3.json','hello.wav','preview.png'].map((path) => asset(`pack/${path}`))];
-
-test('archive detection trusts ZIP/RAR signatures before misleading filename extensions', async () => {
-  const rar5 = new File([Uint8Array.from([0x52,0x61,0x72,0x21,0x1a,0x07,0x01,0x00])], 'model.zip');
-  const rar4 = new File([Uint8Array.from([0x52,0x61,0x72,0x21,0x1a,0x07,0x00])], 'legacy.zip');
-  const zip = new File([Uint8Array.from([0x50,0x4b,0x03,0x04])], 'model.rar');
-  assert.equal(await detectModelArchive(rar5), 'rar');
-  assert.equal(await detectModelArchive(rar4), 'rar');
-  assert.equal(await detectModelArchive(zip), 'zip');
-  assert.equal(await detectModelArchive(new File(['not-an-archive'], 'fallback.rar')), 'rar');
-  assert.equal(await detectModelArchive(new File(['folder-file'], 'avatar.model3.json')), undefined);
-});
 
 test('ZIP output batches tiny bursts into bounded Blobs and preserves reused input', async () => {
   const NativeBlob = globalThis.Blob;
